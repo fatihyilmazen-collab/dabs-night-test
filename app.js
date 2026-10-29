@@ -2,7 +2,7 @@ import {initializeApp} from 'https://www.gstatic.com/firebasejs/10.12.2/firebase
 import {getAuth,onAuthStateChanged,signInWithEmailAndPassword,createUserWithEmailAndPassword,sendPasswordResetEmail,sendEmailVerification,updateProfile,signOut,GoogleAuthProvider,signInWithPopup} from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
 import {initializeFirestore,persistentLocalCache,persistentMultipleTabManager,doc as fdoc,collection as fcol,getDoc,getDocs,setDoc,updateDoc,deleteDoc,onSnapshot as fsnap,query as fquery,orderBy as forder,limit as flimit} from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 import {firebaseConfig,OWNER_EMAIL,ENV} from './firebase-config.js';
-const APP_VERSION='2.0.10291953-test';
+const APP_VERSION='2.0.10292022-test';
 
 
 const NS='http://schemas.openxmlformats.org/spreadsheetml/2006/main';
@@ -189,7 +189,7 @@ const docDateKey=(d,around)=>dateKeyFrom(d.sections.map(s=>s.title).join(' '),ar
 const nightDateKey=n=>n.dateKey||dateKeyFrom(n.label,n.loadedAt);
 function hashStr(s){let h=0x811c9dc5;for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619)}return (h>>>0).toString(36)}
 const tradeNames=it=>{const sec=doc.sections[it.sec];return allCols(it).map(c=>{const t=(sec.trades.find(x=>x.col===c)||it.trades.find(x=>x.col===c));return t?t.name:''}).filter(Boolean)};
-function compactItems(){return allItems().map(it=>{const s=st[it.id]||{};return {t:it.tag,a:it.act,l:it.level,s:rowStatus(it),b:s.blockers||[],x:!!it.added,tr:tradeNames(it)}})}
+function compactItems(){return allItems().map(it=>{const s=st[it.id]||{};return {t:it.tag,a:it.act,l:it.level,s:rowStatus(it),b:s.blockers||[],x:!!it.added,tr:tradeNames(it),n:(s.note||'').slice(0,160),dr:(it.dayRemark||'').slice(0,120)}})}
 
 /* ---------- sync status, with the time of the last change anyone made ---------- */
 let localPending=false;
@@ -791,6 +791,7 @@ function openMenu(){
   const role=isAdmin?'Admin':canWrite?'Contributor':'Viewer';
   const it=(id,label,sub,show=true)=>show?`<button class="mi" type="button" id="${id}"><strong>${label}</strong><span>${sub}</span></button>`:'';
   openView('menu',`<h3>Menu</h3><div class="menu">
+    ${it('mSearch','Search history','Find a tag or activity: every night it was on, status and blockers')}
     ${it('mArchive','Archive','Earlier nights, open or delete')}
     ${it('mConcerns','Concern list',openConcerns().length+' open')}
     ${it('mBrief','Daily Activity Briefing','Word documents for each trade',!!doc)}
@@ -806,7 +807,7 @@ function openMenu(){
       <p><strong>Android (Chrome):</strong> menu ⋮ → Install app.<br><strong>iPhone (Safari):</strong> Share button → Add to Home Screen.</p></div>`}
     <button class="ghost" type="button" id="mClose">Close</button>`);
   const on=(id,f)=>{const b=$('#'+id);if(b)b.onclick=f};
-  on('mClose',closeSheet);on('mArchive',openArchive);on('mConcerns',openConcernsView);on('mBrief',openBriefing);on('mPeople',openPeople);
+  on('mClose',closeSheet);on('mSearch',openSearch);on('mArchive',openArchive);on('mConcerns',openConcernsView);on('mBrief',openBriefing);on('mPeople',openPeople);
   on('mSettings',openSettings);on('mTeam',openTeam);on('mCopy',copyLiveToTest);on('mReplace',()=>{closeSheet();$('#replaceInput').click()});
   on('signOut',async()=>{closeSheet();await fbSignOut()});
   on('doInstall',async()=>{try{installPrompt.prompt();await installPrompt.userChoice}catch(e){}installPrompt=null;openMenu()});
@@ -831,6 +832,65 @@ async function copyLiveToTest(){
         n++}
       toast(n?'Copied '+n+' nights':'Nothing new to copy');closeSheet()}
     catch(e){msg('Copy stopped ('+(e.code||e.message||'error')+')');b.disabled=false}};
+}
+
+/* ---------- search history: every night a tag or activity was on the DABS ---------- */
+const sNorm=x=>String(x||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+function histEntries(){
+  const src=new Map(tagHist);
+  for(const n of allNights())if(!src.has(n.id)&&n.items)src.set(n.id,{label:n.label,at:n.loadedAt,dateKey:nightDateKey(n),items:n.items});
+  if(cur&&doc)src.set(cur.id,{label:cur.label,at:cur.loadedAt,dateKey:nightDateKey(cur),items:compactItems()});
+  return src;
+}
+function dateText(e){if(e.dateKey){const [y,m,d]=e.dateKey.split('-');return new Date(+y,+m-1,+d).toLocaleDateString('en-GB',{weekday:'short',day:'numeric',month:'short',year:'numeric'})}return e.label||''}
+function runSearch(q){
+  q=String(q||'').trim();if(q.length<2)return null;
+  const qn=sNorm(q),words=q.toLowerCase().split(/\s+/).filter(Boolean);
+  const groups=new Map();
+  for(const [nid,e] of histEntries())for(const it of e.items||[]){
+    const tagHit=qn.length>=2&&tokens(it.t).concat([sNorm(it.t)]).some(tk=>sNorm(tk).includes(qn));
+    const txt=(it.a+' '+(it.n||'')+' '+(it.dr||'')).toLowerCase();
+    const actHit=words.every(w=>txt.includes(w));
+    if(!tagHit&&!actHit)continue;
+    const key=it.t||it.a;if(!groups.has(key))groups.set(key,{tag:it.t,rows:[]});
+    groups.get(key).rows.push({nid,e,it});
+  }
+  const out=[...groups.values()];
+  for(const g of out)g.rows.sort((a,b)=>b.e.at-a.e.at);
+  out.sort((a,b)=>b.rows[0].e.at-a.rows[0].e.at);
+  return out;
+}
+function openSearch(){
+  openView('search',`<h3>Search history</h3>
+    <p>Type a tag number (part of it is enough, e.g. <strong>GL04</strong> or <strong>1CEX2478</strong>) or words from the activity (e.g. <strong>lisega</strong>). Every night the job was on the DABS is listed with its status and blockers.</p>
+    <label for="sh_q">Tag or activity<input id="sh_q" autocomplete="off" inputmode="search" placeholder="e.g. 1GST1930TY-GL04"></label>
+    <div id="sh_res"></div>
+    <button class="ghost" type="button" id="shClose">Close</button>`);
+  $('#shClose').onclick=closeSheet;
+  let t=null;$('#sh_q').oninput=e=>{clearTimeout(t);t=setTimeout(()=>renderSearch(e.target.value),200)};
+  $('#sh_res').onclick=async e=>{const b=e.target.closest('[data-shopen]');if(!b)return;
+    let n=allNights().find(x=>x.id===b.dataset.shopen);
+    if(!n){try{const d=await db.doc(P('nights')+'/'+b.dataset.shopen).get();if(d.exists)n=Object.assign({id:d.id},d.data())}catch(err){}}
+    if(!n){toast('That night is no longer in the archive');return}
+    closeSheet();try{await openNight(n);window.scrollTo(0,0);toast('Opened '+n.label)}catch(err){toast(err.message)}};
+  setTimeout(()=>$('#sh_q').focus(),50);
+}
+function renderSearch(q){
+  const el=$('#sh_res');if(!el)return;const res=runSearch(q);
+  if(!res){el.innerHTML='';return}
+  if(!res.length){el.innerHTML=`<p class="nc">Nothing found for “${esc(q)}”. ${tagHistReady?'':'History is still loading, try again in a moment.'}</p>`;return}
+  const tone=s=>s==='DONE'?'ok':s==='ONGOING'?'go':s==='NOT DONE'?'no':'un';
+  el.innerHTML=`<p class="nc">${res.length} ${res.length===1?'job':'jobs'} found</p>`+res.slice(0,60).map(g=>{
+    const r=g.rows,first=r[r.length-1],last=r[0];
+    const doneAt=r.slice().reverse().find(x=>x.it.s==='DONE');
+    const notDone=new Set(r.filter(x=>x.it.s!=='DONE').map(x=>x.nid)).size;
+    return `<section class="shg"><h4 class="tag">${esc(g.tag||'—')}</h4>
+      <p class="nc">On ${r.length} ${r.length===1?'night':'nights'} · first ${esc(dateText(first.e))} · last ${esc(dateText(last.e))}${doneAt?` · <strong class="ok">DONE on ${esc(dateText(doneAt.e))}</strong>`:''}${notDone?` · not done on ${notDone}`:''}</p>
+      <ul class="shl">${r.map(x=>`<li><button class="link" type="button" data-shopen="${esc(x.nid)}">${esc(dateText(x.e))}</button>
+        <span class="hs ${tone(x.it.s)}">${esc(x.it.s||'NOT UPDATED')}</span>
+        <span class="sha">${esc(x.it.a)}${x.it.l?' · Lvl '+esc(x.it.l):''}${(x.it.tr||[]).length?' · '+esc(x.it.tr.join(', ')):''}${x.it.x?' · added on night':''}</span>
+        ${(x.it.b||[]).length?`<span class="shb">Blocker: ${esc(x.it.b.join(', '))}</span>`:''}
+        ${x.it.n?`<span class="shn">${esc(x.it.n)}</span>`:''}</li>`).join('')}</ul></section>`}).join('');
 }
 /* ---------- Daily Activity Briefing: per-trade Word documents in the site DAB format ---------- */
 const lvlShort=l=>String(l||'').replace(/\.0+$/,'').replace(/^([+-]?\d+)\.(\d*?)0+$/,'$1.$2').replace(/\.$/,'');
