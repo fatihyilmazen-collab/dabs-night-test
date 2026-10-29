@@ -1,0 +1,119 @@
+rules_version = '2';
+// DABS Night database rules. Paste all of this into Firebase console > Firestore Database > Rules, then Publish.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function isOwner(owners) {
+      return signedIn() && request.auth.token.email_verified == true && request.auth.token.email in owners;
+    }
+    function roleIn(m) {
+      return exists(/databases/$(database)/documents/$(m)/$(request.auth.uid))
+        ? get(/databases/$(database)/documents/$(m)/$(request.auth.uid)).data.role : 'none';
+    }
+    function canRead(m, owners) { return isOwner(owners) || (signedIn() && roleIn(m) in ['viewer', 'contributor', 'admin']); }
+    function canWrite(m, owners) { return isOwner(owners) || (signedIn() && roleIn(m) in ['contributor', 'admin']); }
+    function isAdmin(m, owners) { return isOwner(owners) || (signedIn() && roleIn(m) == 'admin'); }
+
+    // ----- live app -----
+    match /members/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || isAdmin('members', ['fatihyilmaz.en@gmail.com', 'yilmazfatih05@gmail.com']));
+      allow create: if signedIn() && request.auth.uid == uid && request.resource.data.role == 'pending';
+      allow update: if isAdmin('members', ['fatihyilmaz.en@gmail.com', 'yilmazfatih05@gmail.com'])
+        || (signedIn() && request.auth.uid == uid && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name']));
+      allow delete: if isAdmin('members', ['fatihyilmaz.en@gmail.com', 'yilmazfatih05@gmail.com']);
+    }
+    match /nights/{nightId} {
+      allow read: if canRead('members', ['fatihyilmaz.en@gmail.com', 'yilmazfatih05@gmail.com']);
+      allow create: if canWrite('members', ['fatihyilmaz.en@gmail.com', 'yilmazfatih05@gmail.com']);
+      // only admins may swap the DABS file of a night
+      allow update: if canWrite('members', ['fatihyilmaz.en@gmail.com', 'yilmazfatih05@gmail.com'])
+        && (isAdmin('members', ['fatihyilmaz.en@gmail.com', 'yilmazfatih05@gmail.com']) || !request.resource.data.diff(resource.data).affectedKeys().hasAny(['fileId', 'fileName', 'dateKey']));
+      allow delete: if isAdmin('members', ['fatihyilmaz.en@gmail.com', 'yilmazfatih05@gmail.com']);
+      match /items/{itemId} {
+        allow read: if canRead('members', ['fatihyilmaz.en@gmail.com', 'yilmazfatih05@gmail.com']);
+        allow create, update, delete: if canWrite('members', ['fatihyilmaz.en@gmail.com', 'yilmazfatih05@gmail.com']);
+      }
+    }
+    match /files/{fileId} {
+      allow read: if canRead('members', ['fatihyilmaz.en@gmail.com', 'yilmazfatih05@gmail.com']);
+      allow create: if canWrite('members', ['fatihyilmaz.en@gmail.com', 'yilmazfatih05@gmail.com']);
+      allow update: if false;
+      allow delete: if isAdmin('members', ['fatihyilmaz.en@gmail.com', 'yilmazfatih05@gmail.com']);
+    }
+    // one DABS per night: the first person to load it creates the lock, nobody else can overwrite it
+    match /dates/{key} {
+      allow read: if canRead('members', ['fatihyilmaz.en@gmail.com', 'yilmazfatih05@gmail.com']);
+      allow create: if canWrite('members', ['fatihyilmaz.en@gmail.com', 'yilmazfatih05@gmail.com']);
+      allow update, delete: if isAdmin('members', ['fatihyilmaz.en@gmail.com', 'yilmazfatih05@gmail.com']);
+    }
+    match /tagHist/{month} {
+      allow read: if canRead('members', ['fatihyilmaz.en@gmail.com', 'yilmazfatih05@gmail.com']);
+      allow create, update: if canWrite('members', ['fatihyilmaz.en@gmail.com', 'yilmazfatih05@gmail.com']);
+      allow delete: if isAdmin('members', ['fatihyilmaz.en@gmail.com', 'yilmazfatih05@gmail.com']);
+    }
+    match /concerns/{id} {
+      allow read: if canRead('members', ['fatihyilmaz.en@gmail.com', 'yilmazfatih05@gmail.com']);
+      allow create: if canWrite('members', ['fatihyilmaz.en@gmail.com', 'yilmazfatih05@gmail.com']) && request.resource.data.by == request.auth.uid;
+      allow update, delete: if canWrite('members', ['fatihyilmaz.en@gmail.com', 'yilmazfatih05@gmail.com']);
+    }
+    match /people/{id} {
+      allow read: if canRead('members', ['fatihyilmaz.en@gmail.com', 'yilmazfatih05@gmail.com']);
+      allow write: if isAdmin('members', ['fatihyilmaz.en@gmail.com', 'yilmazfatih05@gmail.com']);
+    }
+    match /settings/{id} {
+      allow read: if canRead('members', ['fatihyilmaz.en@gmail.com', 'yilmazfatih05@gmail.com']);
+      allow write: if isAdmin('members', ['fatihyilmaz.en@gmail.com', 'yilmazfatih05@gmail.com']);
+    }
+
+    // ----- test copy -----
+    match /test_members/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || isAdmin('test_members', ['fatihyilmaz.en@gmail.com']));
+      allow create: if signedIn() && request.auth.uid == uid && request.resource.data.role == 'pending';
+      allow update: if isAdmin('test_members', ['fatihyilmaz.en@gmail.com'])
+        || (signedIn() && request.auth.uid == uid && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name']));
+      allow delete: if isAdmin('test_members', ['fatihyilmaz.en@gmail.com']);
+    }
+    match /test_nights/{nightId} {
+      allow read: if canRead('test_members', ['fatihyilmaz.en@gmail.com']);
+      allow create: if canWrite('test_members', ['fatihyilmaz.en@gmail.com']);
+      // only admins may swap the DABS file of a night
+      allow update: if canWrite('test_members', ['fatihyilmaz.en@gmail.com'])
+        && (isAdmin('test_members', ['fatihyilmaz.en@gmail.com']) || !request.resource.data.diff(resource.data).affectedKeys().hasAny(['fileId', 'fileName', 'dateKey']));
+      allow delete: if isAdmin('test_members', ['fatihyilmaz.en@gmail.com']);
+      match /items/{itemId} {
+        allow read: if canRead('test_members', ['fatihyilmaz.en@gmail.com']);
+        allow create, update, delete: if canWrite('test_members', ['fatihyilmaz.en@gmail.com']);
+      }
+    }
+    match /test_files/{fileId} {
+      allow read: if canRead('test_members', ['fatihyilmaz.en@gmail.com']);
+      allow create: if canWrite('test_members', ['fatihyilmaz.en@gmail.com']);
+      allow update: if false;
+      allow delete: if isAdmin('test_members', ['fatihyilmaz.en@gmail.com']);
+    }
+    // one DABS per night: the first person to load it creates the lock, nobody else can overwrite it
+    match /test_dates/{key} {
+      allow read: if canRead('test_members', ['fatihyilmaz.en@gmail.com']);
+      allow create: if canWrite('test_members', ['fatihyilmaz.en@gmail.com']);
+      allow update, delete: if isAdmin('test_members', ['fatihyilmaz.en@gmail.com']);
+    }
+    match /test_tagHist/{month} {
+      allow read: if canRead('test_members', ['fatihyilmaz.en@gmail.com']);
+      allow create, update: if canWrite('test_members', ['fatihyilmaz.en@gmail.com']);
+      allow delete: if isAdmin('test_members', ['fatihyilmaz.en@gmail.com']);
+    }
+    match /test_concerns/{id} {
+      allow read: if canRead('test_members', ['fatihyilmaz.en@gmail.com']);
+      allow create: if canWrite('test_members', ['fatihyilmaz.en@gmail.com']) && request.resource.data.by == request.auth.uid;
+      allow update, delete: if canWrite('test_members', ['fatihyilmaz.en@gmail.com']);
+    }
+    match /test_people/{id} {
+      allow read: if canRead('test_members', ['fatihyilmaz.en@gmail.com']);
+      allow write: if isAdmin('test_members', ['fatihyilmaz.en@gmail.com']);
+    }
+    match /test_settings/{id} {
+      allow read: if canRead('test_members', ['fatihyilmaz.en@gmail.com']);
+      allow write: if isAdmin('test_members', ['fatihyilmaz.en@gmail.com']);
+    }
+  }
+}
