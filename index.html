@@ -241,6 +241,36 @@ select{border:1px solid var(--line);background:var(--surface-2);border-radius:8p
 .sha{font-size:13px;color:var(--fg);min-width:0}
 .shb{width:100%;font-size:12.5px;color:var(--no)}
 .shn{width:100%;font-size:12.5px;color:var(--muted)}
+
+/* DABS from screenshot */
+.phbar{height:6px;border-radius:3px;background:var(--surface-2);overflow:hidden}.phbar span{display:block;height:100%;width:0;background:var(--accent);transition:width .3s}
+.phimgs{display:flex;flex-direction:column;gap:8px;max-height:40vh;overflow:auto;border:1px solid var(--line);border-radius:8px}
+.phimgs img{width:100%;height:auto;display:block}
+.phsec{display:flex;flex-direction:column;gap:8px;border-top:2px solid var(--line);padding-top:10px}
+.phrow{display:flex;flex-direction:column;gap:6px;border:1px solid var(--line);border-left:4px solid var(--line);border-radius:8px;padding:8px 10px;background:var(--surface-2)}
+.phrow.warn{border-left-color:var(--accent)}
+.phrow label{font-size:12px;color:var(--muted);display:flex;flex-direction:column;gap:3px}
+.phrow input{border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:7px;font-size:15px;color:var(--fg)}
+.phrow input.chk{border-color:var(--accent);background:var(--surface)}
+.phg{display:grid;grid-template-columns:90px 1fr;gap:8px}.phg .wide{min-width:0}
+.phwarn-chip{display:inline-block;border-left:4px solid var(--accent);padding-left:6px;font-weight:700}
+
+.phcrop{overflow-x:auto;background:#fff;border-radius:4px;border:1px solid var(--line)}
+.phcrop img{display:block;height:34px;max-width:none;width:auto}
+.phall summary{cursor:pointer;color:var(--accent);font-weight:700;padding:4px 0}
+.phimgs{overflow:auto}.phimgs img{max-width:none;width:auto}
+
+/* headcount */
+.hct{border-collapse:collapse;width:100%;font-size:14px;font-variant-numeric:tabular-nums}
+.hct caption{font-weight:800;text-align:left;padding-bottom:6px}
+.hct th,.hct td{border:1px solid var(--line);padding:5px 8px;text-align:left}
+.hct td:last-child,.hct th:last-child{text-align:center;width:70px}
+.hct thead th{background:#1F3864;color:#fff}
+.hct tbody tr:nth-child(even) td{background:var(--surface-2)}
+.hct tfoot td{background:#FFE699;color:#000;font-weight:800}
+.hcrows{display:flex;flex-direction:column;gap:6px}
+.hcr{display:grid;grid-template-columns:1fr 70px 40px;gap:6px}
+.hcr input{border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:7px;font-size:15px;color:var(--fg);min-width:0}
 </style>
 </head>
 <body>
@@ -263,7 +293,7 @@ select{border:1px solid var(--line);background:var(--surface-2);border-radius:8p
 
 <input type="file" id="bkInput" accept=".json,application/json" hidden>
 <input type="file" id="replaceInput" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
-<input type="file" id="fileInput" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
+<input type="file" id="fileInput" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,image/*" multiple hidden>
 
 <div class="wrap" id="banner"></div>
 <main><div class="wrap" id="main"></div></main>
@@ -280,6 +310,6 @@ select{border:1px solid var(--line);background:var(--surface-2);border-radius:8p
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script>if('serviceWorker' in navigator)navigator.serviceWorker.register('./sw.js').catch(function(){});</script>
-<script type="module" src="app.js?v=2.0.10292107-test"></script>
+<script type="module" src="app.js?v=2.0.10292144-test"></script>
 </body>
 </html>

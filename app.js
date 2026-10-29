@@ -2,7 +2,7 @@ import {initializeApp} from 'https://www.gstatic.com/firebasejs/10.12.2/firebase
 import {getAuth,onAuthStateChanged,signInWithEmailAndPassword,createUserWithEmailAndPassword,sendPasswordResetEmail,sendEmailVerification,updateProfile,signOut,GoogleAuthProvider,signInWithPopup} from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
 import {initializeFirestore,persistentLocalCache,persistentMultipleTabManager,doc as fdoc,collection as fcol,getDoc,getDocs,setDoc,updateDoc,deleteDoc,onSnapshot as fsnap,query as fquery,orderBy as forder,limit as flimit} from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 import {firebaseConfig,OWNER_EMAIL,ENV} from './firebase-config.js';
-const APP_VERSION='2.0.10292107-test';
+const APP_VERSION='2.0.10292144-test';
 
 
 const NS='http://schemas.openxmlformats.org/spreadsheetml/2006/main';
@@ -177,9 +177,8 @@ function nightLabel(d,loadedAt){
 }
 /* The night's date, read from the DABS title ("28th-Oct Night"); the year is the one closest to the upload day. */
 function dateKeyFrom(text,around){
-  const m=/(\d{1,2})(?:st|nd|rd|th)?[\s\-.]*([A-Za-z]{3})/.exec(String(text||''));
+  let m=null;for(const x of String(text||'').matchAll(/(\d{1,2})(?:st|nd|rd|th)?[\s\-.]*([A-Za-z]{3})/g)){if(MONTHS.includes(x[2].toLowerCase())&&+x[1]>=1&&+x[1]<=31){m=x;break}}
   if(!m)return null;const mon=MONTHS.indexOf(m[2].toLowerCase());const day=+m[1];
-  if(mon<0||day<1||day>31)return null;
   const base=new Date(around||Date.now());let best=null;
   for(const y of [base.getFullYear()-1,base.getFullYear(),base.getFullYear()+1]){
     const t=new Date(y,mon,day).getTime();if(!best||Math.abs(t-base)<Math.abs(best-base))best=t}
@@ -794,6 +793,7 @@ function openMenu(){
     ${it('mSearch','Search history','Find a tag or activity: every night it was on, status and blockers')}
     ${it('mArchive','Archive','Earlier nights, open or delete')}
     ${it('mConcerns','Concern list',openConcerns().length+' open')}
+    ${it('mHc','Headcount',cur&&cur.headcount?'Added for '+cur.label+' · prints under the report':'Upload tonight\'s headcount picture',!!cur)}
     ${it('mBrief','Daily Activity Briefing','Word documents for each trade',!!doc)}
     ${it('mPeople','Personel',peopleList.length+' people · edit names and roles')}
     ${it('mReplace','Replace tonight\'s DABS','Load a corrected file for '+(cur?cur.label:''),isAdmin&&!!cur)}
@@ -807,7 +807,7 @@ function openMenu(){
       <p><strong>Android (Chrome):</strong> menu ⋮ → Install app.<br><strong>iPhone (Safari):</strong> Share button → Add to Home Screen.</p></div>`}
     <button class="ghost" type="button" id="mClose">Close</button>`);
   const on=(id,f)=>{const b=$('#'+id);if(b)b.onclick=f};
-  on('mClose',closeSheet);on('mSearch',openSearch);on('mArchive',openArchive);on('mConcerns',openConcernsView);on('mBrief',openBriefing);on('mPeople',openPeople);
+  on('mClose',closeSheet);on('mSearch',openSearch);on('mArchive',openArchive);on('mConcerns',openConcernsView);on('mBrief',openBriefing);on('mHc',openHeadcount);on('mPeople',openPeople);
   on('mSettings',openSettings);on('mTeam',openTeam);on('mCopy',copyLiveToTest);on('mReplace',()=>{closeSheet();$('#replaceInput').click()});
   on('signOut',async()=>{closeSheet();await fbSignOut()});
   on('doInstall',async()=>{try{installPrompt.prompt();await installPrompt.userChoice}catch(e){}installPrompt=null;openMenu()});
@@ -1027,7 +1027,7 @@ function wCell(content,o={}){
   const pr=`<w:tcPr><w:tcW w:w="${o.w}" w:type="dxa"/>${o.span>1?`<w:gridSpan w:val="${o.span}"/>`:''}${o.fill?`<w:shd w:val="clear" w:color="auto" w:fill="${o.fill}"/>`:''}<w:tcMar><w:left w:w="70" w:type="dxa"/><w:right w:w="70" w:type="dxa"/></w:tcMar><w:vAlign w:val="${o.v||'center'}"/></w:tcPr>`;
   return `<w:tc>${pr}${content||wP('')}</w:tc>`;
 }
-function wRow(cells,o={}){return `<w:tr><w:trPr>${o.h?`<w:trHeight w:val="${o.h}" w:hRule="${o.rule||'atLeast'}"/>`:''}<w:cantSplit/></w:trPr>${cells.join('')}</w:tr>`}
+function wRow(cells,o={}){return `<w:tr><w:trPr>${o.h?`<w:trHeight w:val="${o.h}" w:hRule="${o.rule||'atLeast'}"/>`:''}<w:cantSplit/>${o.header?'<w:tblHeader/>':''}</w:trPr>${cells.join('')}</w:tr>`}
 function wTable(grid,rows,o={}){
   const b=o.noBorder?'<w:tblBorders><w:top w:val="nil"/><w:left w:val="nil"/><w:bottom w:val="nil"/><w:right w:val="nil"/><w:insideH w:val="nil"/><w:insideV w:val="nil"/></w:tblBorders>'
     :'<w:tblBorders><w:top w:val="single" w:sz="8" w:color="404040"/><w:left w:val="single" w:sz="8" w:color="404040"/><w:bottom w:val="single" w:sz="8" w:color="404040"/><w:right w:val="single" w:sz="8" w:color="404040"/><w:insideH w:val="single" w:sz="4" w:color="404040"/><w:insideV w:val="single" w:sz="4" w:color="404040"/></w:tblBorders>';
@@ -1065,13 +1065,17 @@ function dabPage1(T){
   return wP(wRun('Daily Activity Briefing',{b:true,sz:36}),{jc:'center',after:160})+wTable(G,rows);
 }
 function dabPage2(T){
-  const G=[3300,2000,2500,2666],W=G.reduce((a,b)=>a+b,0);
+  const G=[3000,1500,3166,2800],W=G.reduce((a,b)=>a+b,0);
   const top=wTable([W/2,W/2],[wRow([wCell(wP([wRun('ENKA ',{b:true,sz:30,color:'1F4E9A'}),wRun('UK',{b:true,sz:30,color:'1F4E9A'})]),{w:W/2}),
     wCell(wP(wRun('Daily Activity Briefing',{b:true,sz:30}),{jc:'right'}),{w:W/2})])],{noBorder:true});
   const hd=['Name (print)','SAP No. (Badge)','Trade','Signature'];
   const ps=signers(T);const n=Math.max(ps.length+4,22);
-  const rows=[wRow(hd.map((h,i)=>wCell(wText(h,{b:true,sz:20,color:'FFFFFF',jc:'center'}),{w:G[i],fill:C.sign})),{h:420})];
-  for(let i=0;i<n;i++){const p=ps[i]||{};rows.push(wRow([wCell(wText(p.name||'',{sz:21}),{w:G[0]}),wCell(wText(p.sap||'',{sz:21}),{w:G[1]}),wCell(wText(p.trade||'',{sz:21}),{w:G[2]}),wCell('',{w:G[3]})],{h:500}))}
+  const rows=[wRow(hd.map((h,i)=>wCell(wText(h,{b:true,sz:20,color:'FFFFFF',jc:'center'}),{w:G[i],fill:C.sign})),{h:420,header:true})];
+  // every row as tall as the tallest one (a long trade name wraps), so each person gets the same signature box
+  const lines=(t,w)=>Math.max(1,Math.ceil(String(t||'').length*112/(w-140)));
+  const maxL=Math.max(1,...ps.map(p=>Math.max(lines(p.name,G[0]),lines(p.sap,G[1]),lines(p.trade,G[2]))));
+  const h=Math.max(520,maxL*250+160);
+  for(let i=0;i<n;i++){const p=ps[i]||{};rows.push(wRow([wCell(wText(p.name||'',{sz:21}),{w:G[0]}),wCell(wText(p.sap||'',{sz:21}),{w:G[1]}),wCell(wText(p.trade||'',{sz:21}),{w:G[2]}),wCell('',{w:G[3]})],{h,rule:'exact'}))}
   return top+wP('',{after:120})+wTable(G,rows);
 }
 async function buildDabDocx(trades){
@@ -1091,6 +1095,404 @@ async function buildDabDocx(trades){
   return z.generateAsync({type:'uint8array',compression:'DEFLATE'});
 }
 window.__buildDab=t=>buildDabDocx(t);window.__briefTrades=()=>Object.keys((brief||{}).trades||{});
+/* ---------- DABS from a screenshot: read the table on the phone, check it, turn it into the DABS Excel ---------- */
+const OCR_JS='https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';
+let ocrWorker=null;
+function loadScript(src){return new Promise((res,rej)=>{if(window.Tesseract){res();return}const s=document.createElement('script');s.src=src;s.onload=res;s.onerror=()=>rej(new Error('Could not download the text reader. It needs signal the first time it is used.'));document.head.appendChild(s)})}
+async function getOcr(progress){
+  if(window.__ocrOverride)return window.__ocrOverride;
+  await loadScript(OCR_JS);
+  if(!ocrWorker){ocrWorker=await Tesseract.createWorker('eng',1,{logger:m=>{if(progress&&m&&m.status)progress(m.status,m.progress)}});
+    await ocrWorker.setParameters({tessedit_pageseg_mode:'6',preserve_interword_spaces:'1'})}
+  return ocrWorker;
+}
+
+/* image → grey canvas at a size the reader likes, with the table lines found and painted out */
+async function prepareImage(file){
+  const bmp=await createImageBitmap(file);
+  let scale=1;if(bmp.width<1600)scale=Math.min(3,1800/bmp.width);if(bmp.width*scale>3200)scale=3200/bmp.width;
+  const W=Math.round(bmp.width*scale),H=Math.round(bmp.height*scale);
+  const cv=document.createElement('canvas');cv.width=W;cv.height=H;const cx=cv.getContext('2d',{willReadFrequently:true});
+  cx.fillStyle='#fff';cx.fillRect(0,0,W,H);cx.imageSmoothingQuality='high';cx.drawImage(bmp,0,0,W,H);
+  const orig=document.createElement('canvas');orig.width=W;orig.height=H;orig.getContext('2d').drawImage(cv,0,0);
+  const img=cx.getImageData(0,0,W,H),px=img.data;const dark=new Uint8Array(W*H);   // lines can be light grey, so a softer threshold for finding them
+  for(let i=0,j=0;i<px.length;i+=4,j++){const l=0.299*px[i]+0.587*px[i+1]+0.114*px[i+2];dark[j]=l<200?1:0}
+  // horizontal lines: long dark runs
+  const hRows=new Map();
+  for(let y=0;y<H;y++){let x=0;const o=y*W;while(x<W){if(dark[o+x]){const s=x;while(x<W&&dark[o+x])x++;if(x-s>W*0.06){const r=hRows.get(y)||[];r.push([s,x]);hRows.set(y,r)}}else x++}}
+  const hLines=groupLines([...hRows.keys()].sort((a,b)=>a-b),y=>hRows.get(y),'y');
+  const gaps=[];for(let i=1;i<hLines.length;i++){const g=hLines[i].y-hLines[i-1].y;if(g>8)gaps.push(g)}
+  gaps.sort((a,b)=>a-b);const rowH=Math.max(14,Math.min(90,gaps[Math.floor(gaps.length/2)]||30));
+  const vCols=new Map();const minV=Math.round(rowH*1.5);
+  for(let x=0;x<W;x++){let y=0;while(y<H){if(dark[y*W+x]){const s=y;while(y<H&&dark[y*W+x])y++;if(y-s>=minV){const r=vCols.get(x)||[];r.push([s,y]);vCols.set(x,r)}}else y++}}
+  const vLines=groupLines([...vCols.keys()].sort((a,b)=>a-b),x=>vCols.get(x),'x');
+  // paint the lines white so they do not touch the letters
+  const clean=new Uint8ClampedArray(px);
+  const white=(x,y)=>{const k=(y*W+x)*4;clean[k]=clean[k+1]=clean[k+2]=255};
+  for(const [y,runs] of hRows)for(const [a,b] of runs)for(let x=a;x<b;x++){white(x,y)}
+  for(const [x,runs] of vCols)for(const [a,b] of runs)for(let y=a;y<b;y++){white(x,y)}
+  const cleanDark=new Uint8Array(W*H);for(let i=0,j=0;i<clean.length;i+=4,j++){const l=0.299*clean[i]+0.587*clean[i+1]+0.114*clean[i+2];cleanDark[j]=l<150?1:0}
+  cx.putImageData(new ImageData(clean,W,H),0,0);
+  return {canvas:cv,orig,W,H,hLines,vLines,rowH,cleanDark};
+}
+function groupLines(keys,runsOf,axis){
+  const out=[];let cur=null;
+  for(const k of keys){const runs=runsOf(k);const a=Math.min(...runs.map(r=>r[0])),b=Math.max(...runs.map(r=>r[1]));
+    if(cur&&k-cur.last<=2){cur.last=k;cur.sum+=k;cur.n++;cur.a=Math.min(cur.a,a);cur.b=Math.max(cur.b,b);cur.runs.push(...runs)}
+    else{cur={first:k,last:k,sum:k,n:1,a,b,runs:[...runs]};out.push(cur)}}
+  return out.map(c=>axis==='y'?{y:c.sum/c.n,x0:c.a,x1:c.b}:{x:c.sum/c.n,y0:c.a,y1:c.b,runs:c.runs});
+}
+
+/* HPC tag numbers have a fixed shape, so typical reading mistakes can be put right */
+const TO_DIGIT={O:'0',o:'0',D:'0',Q:'0',L:'1',l:'1',I:'1',i:'1','|':'1',J:'1',Z:'2',z:'2',S:'5',s:'5',B:'8',A:'4',G:'6',T:'7',q:'9',g:'9'};
+const TO_LETTER={'0':'O','1':'I','2':'Z','5':'S','8':'B','4':'A','6':'G','7':'T'};
+const fixD=s=>[...s].map(c=>/\d/.test(c)?c:(TO_DIGIT[c]||c)).join('');
+const fixL=s=>[...s].map(c=>/[A-Z]/.test(c)?c:(TO_LETTER[c]||c.toUpperCase())).join('');
+function fixTagPart(raw){
+  let s=String(raw||'').replace(/[‘’'`"“”.,:;|]/g,'').replace(/[—–~=_]+/g,'-').replace(/\s+/g,'').replace(/^-+|-+$/g,'');
+  if(/^[A-Za-z]{3}.{4}T[YV]/i.test(s))s='1'+s;   // leading 1 not read
+  const m=/^(.)(.{3})(.{4})T[YV](-{1,3})(.{2})(.{2,3})$/i.exec(s);
+  if(!m)return {text:raw.trim(),ok:false};
+  const sys=fixL(m[2].toUpperCase()),num=fixD(m[3]),suf=fixL(m[5].toUpperCase()),n=fixD(m[6]);
+  const spool=suf==='PS';
+  return {text:'1'+sys+num+'TY'+(spool?'--':'-')+suf+n,ok:/^[A-Z]{3}$/.test(sys)&&/^\d{4}$/.test(num)&&/^[A-Z]{2}$/.test(suf)&&/^\d{2,3}$/.test(n)};
+}
+function fixTag(raw){
+  const t=String(raw||'').replace(/^[‘’'`"“”\s—–_\-]+|[‘’'`"“”\s—–_\-.,:]+$/g,'').trim();if(!t)return {text:'',ok:true};
+  if(!/TY/i.test(t))return {text:t,ok:true};
+  const parts=t.split(/\s*&\s*/);let ok=true;const out=[];
+  for(const p of parts){if(/^[PpRr][Ss5][0-9OoSsIl]{2,3}$/.test(p.replace(/\s/g,''))){out.push('PS'+fixD(p.replace(/\s/g,'').slice(2)));continue}
+    const f=fixTagPart(p);ok=ok&&f.ok;out.push(f.text)}
+  return {text:out.join(' & '),ok};
+}
+function fixLevel(raw){
+  const s=String(raw||'').replace(/[Oo]/g,'0').replace(/[—–~]/g,'-').replace(/,/g,'.').replace(/[^0-9+.\-]/g,'');
+  const n=parseFloat(s);if(isNaN(n))return '';return (n>0?'+':'')+n.toFixed(2);
+}
+const KNOWN_TRADES=['Plating','Piping','Lifting','Scaffolding','QC','Welding','Electrical','Insulation'];
+function closestTrade(t){
+  const c=String(t||'').replace(/[^A-Za-z]/g,'');if(!c)return '';
+  let best='',bd=99;for(const k of KNOWN_TRADES){const d=lev(c.toLowerCase(),k.toLowerCase());if(d<bd){bd=d;best=k}}
+  return bd<=Math.max(best.length<=2?2:1,Math.floor(best.length/3))?best:(c[0].toUpperCase()+c.slice(1).toLowerCase());
+}
+function lev(a,b){const d=Array.from({length:a.length+1},(_,i)=>[i]);for(let j=1;j<=b.length;j++)d[0][j]=j;
+  for(let i=1;i<=a.length;i++)for(let j=1;j<=b.length;j++)d[i][j]=Math.min(d[i-1][j]+1,d[i][j-1]+1,d[i-1][j-1]+(a[i-1]===b[j-1]?0:1));return d[a.length][b.length]}
+
+/* words + grid → sections of rows. Each DABS table is found from its "Activity Description" header,
+   so Excel's own gridlines, row numbers and column letters around it do not matter. */
+function buildSections(prep,words){
+  const {hLines,vLines,rowH,cleanDark,W}=prep;
+  const txt=ws=>ws.slice().sort((a,b)=>a.x0-b.x0).map(w=>w.text).join(' ').replace(/\s+/g,' ').trim();
+  const conf=ws=>ws.length?Math.min(...ws.map(w=>w.conf)):100;
+  const cy=w=>(w.y0+w.y1)/2,cxm=w=>(w.x0+w.x1)/2;
+  const heads=words.filter(w=>/^activ/i.test(w.text)).sort((a,b)=>cy(a)-cy(b)).filter((w,i,a)=>i===0||cy(w)-cy(a[i-1])>rowH);
+  const out=[];
+  heads.forEach((hw,hi)=>{
+    const hy=cy(hw);
+    // column lines that pass through the header row
+    let colsX=[];for(const v of vLines)if((v.runs||[[v.y0,v.y1]]).some(([a,b])=>a<hy-2&&b>hy+2))colsX.push(v.x);
+    colsX=colsX.sort((a,b)=>a-b).filter((x,i,a)=>i===0||x-a[i-1]>6);
+    if(colsX.length<6)return;
+    const colOf=x=>{for(let i=0;i<colsX.length-1;i++)if(x>=colsX[i]-2&&x<colsX[i+1]-1)return i;return -1};
+    const actAbs=colOf(cxm(hw));if(actAbs<0)return;
+    // header row top and bottom
+    const span=(l,xa,xb)=>Math.min(l.x1,xb)-Math.max(l.x0,xa)>(xb-xa)*0.6;
+    const hdrWords=words.filter(w=>Math.abs(cy(w)-hy)<rowH*0.8);
+    const lvlW=hdrWords.find(w=>/^lev/i.test(w.text)&&cxm(w)<hw.x0),remW=hdrWords.find(w=>/remark|block/i.test(w.text)&&cxm(w)>hw.x1);
+    let c0=lvlW?colOf(cxm(lvlW)):actAbs-4,c1=remW?colOf(cxm(remW)):Math.min(colsX.length-2,actAbs+5);
+    if(c0<0)c0=Math.max(0,actAbs-4);if(c1<0)c1=colsX.length-2;
+    const xs=colsX.slice(c0,c1+2);const ncol=xs.length-1;const xa=xs[0],xb=xs[ncol];
+    const hl=hLines.filter(l=>span(l,xa,xb)).sort((a,b)=>a.y-b.y);
+    let top=[...hl].reverse().find(l=>l.y<hy-3&&hy-l.y<rowH*1.6);
+    if(!top){const st=[];for(const v of vLines)for(const [a,b] of v.runs||[])if(a<hy&&b>hy&&v.x>=xa-3&&v.x<=xb+3)st.push(a);st.sort((a,b)=>a-b);top={y:st.length?st[Math.floor(st.length/2)]:hy-rowH/2}}
+    const nextHead=heads[hi+1]?cy(heads[hi+1])-rowH*2.5:Infinity;
+    const lines=[top.y,...hl.filter(l=>l.y>hy+2&&l.y<nextHead).map(l=>l.y)];
+    const bands=[];for(let i=1;i<lines.length;i++){if(lines[i]-lines[i-1]>rowH*2.6)break;if(lines[i]-lines[i-1]>4)bands.push([lines[i-1],lines[i]])}
+    if(bands.length<2)return;
+    const ccol=w=>{for(let i=0;i<ncol;i++)if(w.x0+2>=xs[i]-3&&w.x0<xs[i+1]-2)return i;const c=cxm(w);for(let i=0;i<ncol;i++)if(c>xs[i]&&c<xs[i+1])return i;return -1};
+    const grid=bands.map(()=>Array.from({length:ncol},()=>[]));
+    // a word that runs across a column line belongs to two cells: split it by width
+    const split=[];
+    for(const w of words){let parts=[w];
+      for(const bx of xs.slice(1,-1)){const nx=[];for(const p of parts){
+        if(p.x0<bx-4&&p.x1>bx+4&&p.text.length>1){const k=Math.round(p.text.length*(bx-p.x0)/(p.x1-p.x0));
+          const a=p.text.slice(0,k).trim(),b=p.text.slice(k).trim();
+          if(a)nx.push(Object.assign({},p,{text:a,x1:bx-1}));if(b)nx.push(Object.assign({},p,{text:b,x0:bx+1}))}else nx.push(p)}parts=nx}
+      split.push(...parts)}
+    for(const w of split){if(w.x1<xa-4||w.x0>xb+4)continue;const y=cy(w);const r=bands.findIndex(([a,b])=>y>a&&y<b);if(r<0)continue;const c=ccol(w);if(c>=0)grid[r][c].push(w)}
+    const head=grid[0].map(txt);
+    const actC=actAbs-c0,remC=ncol-1,tagC=actC-1,bhC=Math.max(0,actC-2),levelC=0;
+    const tradeCols=[];for(let c=actC+1;c<remC;c++)tradeCols.push({c,name:closestTrade(head[c])||'Trade '+(c-actC)});
+    const tw=words.filter(w=>cy(w)<top.y-1&&cy(w)>top.y-rowH*3.5&&w.x0>=xa-10&&w.x1<=xb+10).sort((a,b)=>cy(a)-cy(b));
+    const tl=[];for(const w of tw){const l=tl.find(l=>Math.abs(l.y-cy(w))<rowH*0.5);if(l)l.ws.push(w);else tl.push({y:cy(w),ws:[w]})}
+    const pick=tl.find(l=>/dabs/i.test(txt(l.ws)))||tl.sort((a,b)=>b.y-a.y)[0];
+    const titleWords=pick?pick.ws.filter(w=>/[A-Za-z0-9]{2,}|&/.test(w.text)):[];
+    const rows=[];let empty=0;
+    for(let r=1;r<bands.length;r++){
+      const g=grid[r];const [ya,yb]=bands[r];
+      if(/^activ/i.test(txt(g[actC]||[])))break;
+      let tagRaw=txt(g[tagC]||[]),actRaw=txt(g[actC]||[]);
+      // words with no digits after a tag number belong to the activity next door
+      {const tk=tagRaw.split(' ');let k=tk.length;while(k>1&&/TY/i.test(tagRaw)&&!/\d/.test(tk[k-1])&&tk[k-1]!=='&')k--;
+        if(k<tk.length){actRaw=(tk.slice(k).join(' ')+' '+actRaw).trim();tagRaw=tk.slice(0,k).join(' ')}}
+      const act=fixAct(actRaw);
+      if(!tagRaw&&!act){if(++empty>=2)break;continue}empty=0;
+      const tg=fixTag(tagRaw);
+      const marks={};
+      for(const t of tradeCols){const x1=Math.round(xs[t.c])+4,x2=Math.round(xs[t.c+1])-4,y1=Math.round(ya)+4,y2=Math.round(yb)-4;let n=0,tot=0;
+        for(let y=y1;y<y2;y++)for(let x=x1;x<x2;x++){tot++;n+=cleanDark[y*W+x]}
+        const ct=txt(g[t.c]||[]).toUpperCase();
+        if(n>Math.max(6,tot*0.006))marks[t.name]=/NOT/.test(ct)?'NOT DONE':/ONGO/.test(ct)?'ONGOING':/DONE/.test(ct)?'DONE':'X'}
+      let lvl=fixLevel(txt(g[levelC]||[]))||'';
+      // DABS writes positive levels with a + ("+16.00"); an unsigned non-zero number is a minus the reader missed
+      {const raw=txt(g[levelC]||[]);if(lvl&&parseFloat(lvl)!==0&&!/[+\-—–~]/.test(raw))lvl='-'+lvl.replace(/^\+/,'')}
+      rows.push({pieces:[[xs[levelC],xs[levelC+1]],[xs[tagC],xs[tagC+1]],[xs[actC],xs[remC]]],ry:[ya,yb],level:lvl,tag:tg.text,tagOk:tg.ok,tagConf:conf(g[tagC]||[]),act,actConf:conf(g[actC]||[]),bh:txt(g[bhC]||[]),remark:txt(g[remC]||[]),marks});
+    }
+    out.push({title:txt(titleWords),trades:tradeCols.map(t=>t.name),tagLabel:/mater/i.test(head[tagC]||'')?'Materials':'Tag No',bh:rows.map(r=>r.bh).filter(Boolean).join(' ').trim(),rows});
+  });
+  return out.filter(s=>s.rows.length);
+}
+function fixAct(a){return String(a||'').replace(/!/g,'').replace(/^[‘’'`"“”.,\s]+/,'').replace(/^P[A1Il|!]\s*:/,'P1:').replace(/^([1-9])\s*:/,'P$1:').replace(/\s+/g,' ').trim()}
+/* a minus sign is often too small for the reader: look for a short dash just left of the number */
+function hasMinus(prep,ws,cellX0){
+  if(!ws.length)return false;const w=ws.slice().sort((a,b)=>a.x0-b.x0)[0];const h=w.y1-w.y0;const {cleanDark,W}=prep;
+  const xa=Math.max(Math.round(cellX0)+2,Math.round(w.x0-h*1.4)),xb=Math.round(w.x0)-1,ya=Math.round(w.y0+h*0.3),yb=Math.round(w.y1-h*0.2);
+  for(let y=ya;y<=yb;y++){let run=0,best=0;for(let x=xa;x<=xb;x++){if(cleanDark[y*W+x]){run++;best=Math.max(best,run)}else run=0}
+    if(best>=Math.max(3,h*0.3)){let above=0;for(let x=xa;x<=xb;x++)if(cleanDark[(y-Math.round(h*0.3))*W+x])above++;if(!above)return true}}
+  return false;
+}
+async function readScreenshot(file,progress){
+  progress('Preparing image…');
+  const prep=await prepareImage(file);
+  const worker=await getOcr((s,p)=>progress(s==='recognizing text'?'Reading text… '+Math.round((p||0)*100)+'%':'Loading the text reader…'));
+  progress('Reading text…');
+  const res=await worker.recognize(prep.canvas);
+  const words=((res&&res.data&&res.data.words)||[]).filter(w=>w.text&&w.text.trim()).map(w=>({text:w.text.trim(),conf:w.confidence,x0:w.bbox.x0,y0:w.bbox.y0,x1:w.bbox.x1,y1:w.bbox.y1}));
+  window.__photoDebug={hLines:prep.hLines,vLines:prep.vLines,rowH:prep.rowH,W:prep.W,H:prep.H,words};
+  const secs=buildSections(prep,words);
+  // a picture of each row (level, tag, then activity and trades) to compare against while checking
+  for(const s of secs)for(const r of s.rows){try{const y=Math.round(r.ry[0])-1,h=Math.round(r.ry[1]-r.ry[0])+3;
+    const ps=r.pieces.map(([a,b])=>[Math.round(a),Math.round(b-a)]);const gap=8;
+    const c=document.createElement('canvas');c.width=ps.reduce((n,p)=>n+p[1]+gap,0);c.height=h;const x2=c.getContext('2d');x2.fillStyle='#fff';x2.fillRect(0,0,c.width,h);
+    let x=0;for(const [a,w] of ps){x2.drawImage(prep.orig,a,y,w,h,x,0,w,h);x+=w+gap}
+    r.crop=c.toDataURL('image/jpeg',0.85)}catch(e){}delete r.pieces;delete r.ry}
+  return secs;
+}
+
+/* review screen */
+let photoSecs=[],photoUrls=[];
+async function openPhotoImport(files){
+  photoUrls.forEach(u=>URL.revokeObjectURL(u));photoUrls=files.map(f=>URL.createObjectURL(f));photoSecs=[];
+  openView('photo',`<h3>DABS from screenshot</h3><p id="phMsg">Preparing…</p><div class="phbar"><span id="phBar"></span></div>
+    <button class="ghost" type="button" id="phCancel">Cancel</button>`);
+  $('#phCancel').onclick=closeSheet;
+  const msg=t=>{const m=$('#phMsg');if(m)m.textContent=t};const bar=p=>{const b=$('#phBar');if(b)b.style.width=Math.round(p*100)+'%'};
+  try{
+    for(let i=0;i<files.length;i++){
+      const secs=await readScreenshot(files[i],(t)=>{msg((files.length>1?`Screenshot ${i+1} of ${files.length}: `:'')+t);const m=/(\d+)%/.exec(t);if(m)bar((i+(+m[1])/100)/files.length)});
+      photoSecs.push(...secs);
+    }
+    if(!photoSecs.length)throw new Error('No DABS table was found. Use a screenshot where the table lines and the "Activity Description" header are visible.');
+    renderPhotoReview();
+  }catch(e){if(sheetView!=='photo')return;
+    openView('photo',`<h3>Could not read the screenshot</h3><p class="err">${esc(e.message||'Unknown error')}</p><button class="btn" type="button" id="cOk">OK</button>`);$('#cOk').onclick=closeSheet}
+}
+function photoKeyDate(){const t=photoSecs.map(s=>s.title).join(' ');return dateKeyFrom(t,Date.now())}
+function renderPhotoReview(){
+  const key=photoKeyDate();
+  const allTr=s=>s.trades;
+  const nWarn=photoSecs.reduce((n,s)=>n+s.rows.filter(r=>!r.tagOk||r.tagConf<55||r.actConf<50).length,0);
+  openView('photo',`<h3>Check the DABS</h3>
+    <p>Compare with the screenshot and fix anything that was read wrong. Rows marked <span class="phwarn-chip">check</span> were hard to read. ${nWarn?`<strong>${nWarn}</strong> to check.`:''}</p>
+    <details class="phall"><summary>Show the whole screenshot</summary><div class="phimgs">${photoUrls.map(u=>`<img src="${u}" alt="Screenshot of the DABS">`).join('')}</div></details>
+    <label for="ph_date">Night (date of the DABS)${key?'':' <span class="phwarn-chip">check</span>'}<input id="ph_date" type="date" value="${key||new Date().toISOString().slice(0,10)}"></label>
+    ${photoSecs.map((s,si)=>`<section class="phsec" data-si="${si}">
+      <label for="ph_t${si}">Section title<input id="ph_t${si}" data-ph="title" data-si="${si}" value="${esc(s.title)}"></label>
+      <label for="ph_bh${si}">Black hat<input id="ph_bh${si}" data-ph="bh" data-si="${si}" value="${esc(s.bh)}"></label>
+      <p class="nc">Trades: ${esc(allTr(s).join(', '))} · ${s.rows.length} rows</p>
+      ${s.rows.map((r,ri)=>`<div class="phrow${(!r.tagOk||r.tagConf<55||r.actConf<50)?' warn':''}" data-si="${si}" data-ri="${ri}">
+        ${r.crop?`<div class="phcrop"><img src="${r.crop}" alt="Row ${ri+1} in the screenshot"></div>`:''}
+        <div class="phg"><label>Level<input data-ph="level" data-si="${si}" data-ri="${ri}" value="${esc(r.level)}" inputmode="decimal"></label>
+          <label class="wide">${esc(s.tagLabel)}<input data-ph="tag" data-si="${si}" data-ri="${ri}" value="${esc(r.tag)}" class="${r.tagOk&&r.tagConf>=55?'':'chk'}"></label></div>
+        <label>Activity description<input data-ph="act" data-si="${si}" data-ri="${ri}" value="${esc(r.act)}" class="${r.actConf>=50?'':'chk'}"></label>
+        <div class="bchips">${s.trades.map(t=>`<button type="button" class="bchip pick" data-phm="${esc(t)}" data-si="${si}" data-ri="${ri}" aria-pressed="${!!r.marks[t]}">${esc(t)}</button>`).join('')}</div>
+        <label>Remark<input data-ph="remark" data-si="${si}" data-ri="${ri}" value="${esc(r.remark)}"></label>
+        <button class="link danger" type="button" data-phdel="1" data-si="${si}" data-ri="${ri}">Delete row</button>
+      </div>`).join('')}
+      <button class="addact" type="button" data-phadd="${si}">+ Add row</button>
+    </section>`).join('')}
+    <p class="err" id="phErr" hidden></p>
+    <div class="grid2"><button class="btn alt" type="button" id="phNo">Cancel</button><button class="btn" type="button" id="phYes">Load this DABS</button></div>`);
+  const P_=$('#panel');
+  P_.oninput=e=>{const t=e.target;const k=t.dataset.ph;if(!k)return;const s=photoSecs[+t.dataset.si];
+    if(k==='title'||k==='bh'){s[k]=t.value;return}const r=s.rows[+t.dataset.ri];r[k]=t.value;if(k==='tag'){r.tagOk=true;r.tagConf=100;t.classList.remove('chk')}if(k==='act'){r.actConf=100;t.classList.remove('chk')}};
+  P_.onclick=e=>{const b=e.target.closest('[data-phm],[data-phdel],[data-phadd]');if(!b)return;
+    if(b.dataset.phadd!=null){photoSecs[+b.dataset.phadd].rows.push({level:'',tag:'',tagOk:true,tagConf:100,act:'',actConf:100,remark:'',marks:{}});renderPhotoReview();return}
+    const s=photoSecs[+b.dataset.si],ri=+b.dataset.ri;
+    if(b.dataset.phdel){s.rows.splice(ri,1);renderPhotoReview();return}
+    const t=b.dataset.phm,r=s.rows[ri];if(r.marks[t])delete r.marks[t];else r.marks[t]='X';b.setAttribute('aria-pressed',String(!!r.marks[t]))};
+  $('#phNo').onclick=closeSheet;
+  $('#phYes').onclick=async()=>{
+    const err=$('#phErr');const d=$('#ph_date').value;
+    if(!d){err.textContent='Pick the date of this DABS.';err.hidden=false;return}
+    const rows=photoSecs.reduce((n,s)=>n+s.rows.filter(r=>r.tag||r.act).length,0);
+    if(!rows){err.textContent='There are no rows to load.';err.hidden=false;return}
+    const [y,m,dd]=d.split('-').map(Number);const dt=new Date(y,m-1,dd);
+    const label=dd+(dd%10===1&&dd!==11?'st':dd%10===2&&dd!==12?'nd':dd%10===3&&dd!==13?'rd':'th')+'-'+dt.toLocaleDateString('en-GB',{month:'short'});
+    for(const s of photoSecs){if(dateKeyFrom(s.title,dt.getTime())!==d){
+      const kind=/spool|piping/i.test(s.title+' '+s.trades.join(' '))?'Spool':'Support';
+      s.title=(s.title&&/dabs/i.test(s.title)?s.title.replace(/\d{1,2}(st|nd|rd|th)?[\s\-.]*[A-Za-z]{3}.*$/,'').trim():'DABS '+kind)+' '+label+' Night'}}
+    const b=$('#phYes');b.disabled=true;b.textContent='Loading…';
+    try{const u8=await buildDabsXlsx(photoSecs);const name='DABS '+label+' Night (from screenshot).xlsx';
+      const file=new File([u8],name,{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+      closeSheet();toast('Checking '+name+'…');await uploadDabs(file)}
+    catch(e){b.disabled=false;b.textContent='Load this DABS';err.textContent=e.message||String(e);err.hidden=false}};
+}
+
+/* write the checked rows as a DABS workbook in the usual layout, so everything else works the same */
+async function buildDabsXlsx(secs){
+  const cells=[],merges=[];const put=(r,c,v,s)=>cells.push({r,c,v,s});
+  let r=2;
+  for(const s of secs){
+    const rows=s.rows.filter(x=>x.tag||x.act);
+    put(r,2,s.title||'DABS',1);merges.push(`B${r}:E${r+1}`);
+    const h=r+2;const trades=s.trades;
+    const head=['Level','Shift','Blackhat',s.tagLabel||'Tag No','Activity Description',...trades,'Remark/Blocker'];
+    head.forEach((t,i)=>put(h,2+i,t,2));
+    rows.forEach((x,i)=>{const rr=h+1+i;
+      put(rr,2,x.level,4);put(rr,3,'Night',4);put(rr,4,i===0?(s.bh||''):'',4);put(rr,5,x.tag,3);put(rr,6,x.act,3);
+      trades.forEach((t,j)=>put(rr,7+j,x.marks[t]?(x.marks[t]==='X'?'X':x.marks[t]):'',4));put(rr,7+trades.length,x.remark||'',3)});
+    if(rows.length>1)merges.push(`D${h+1}:D${h+rows.length}`);
+    r=h+rows.length+3;
+  }
+  const byRow=new Map();for(const c of cells){if(!byRow.has(c.r))byRow.set(c.r,[]);byRow.get(c.r).push(c)}
+  const xe2=s=>String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const sheetRows=[...byRow.keys()].sort((a,b)=>a-b).map(rn=>`<row r="${rn}">${byRow.get(rn).sort((a,b)=>a.c-b.c).map(c=>`<c r="${colName(c.c)}${rn}" s="${c.s}" t="inlineStr"><is><t xml:space="preserve">${xe2(c.v)}</t></is></c>`).join('')}</row>`).join('');
+  const maxC=Math.max(...cells.map(c=>c.c));
+  const widths={2:9,3:13,4:18,5:30,6:38};
+  const cols=[];for(let c=2;c<=maxC;c++)cols.push(`<col min="${c}" max="${c}" width="${c===maxC?60:(widths[c]||13)}" customWidth="1"/>`);
+  const sheet=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><dimension ref="B2:${colName(maxC)}${r}"/><cols>${cols.join('')}</cols><sheetData>${sheetRows}</sheetData><mergeCells count="${merges.length}">${merges.map(m=>`<mergeCell ref="${m}"/>`).join('')}</mergeCells><pageMargins left="0.5" right="0.5" top="0.5" bottom="0.5" header="0.3" footer="0.3"/></worksheet>`;
+  const styles=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="3"><font><sz val="11"/><name val="Arial"/></font><font><b/><sz val="16"/><name val="Arial"/></font><font><b/><sz val="11"/><name val="Arial"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border><border><left style="thin"><color auto="1"/></left><right style="thin"><color auto="1"/></right><top style="thin"><color auto="1"/></top><bottom style="thin"><color auto="1"/></bottom><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="5"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/><xf numFmtId="0" fontId="2" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf><xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment vertical="center"/></xf><xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`;
+  const z=new JSZip();
+  z.file('[Content_Types].xml','<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>');
+  z.file('_rels/.rels','<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>');
+  z.file('xl/workbook.xml','<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets></workbook>');
+  z.file('xl/_rels/workbook.xml.rels','<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>');
+  z.file('xl/worksheets/sheet1.xml',sheet);z.file('xl/styles.xml',styles);
+  return z.generateAsync({type:'uint8array',compression:'DEFLATE'});
+}
+window.__photo={prepareImage,buildSections,fixTag,buildDabsXlsx,secs:()=>photoSecs};
+/* ---------- headcount: the nightly Trade / Count table, printed under the report ---------- */
+const HC_TRADES=['Staff','Rigger Chargehand','Rigger','Crane Operator','Plater Chargehand','Plater','Scaffolder','Pipe Welder Chargehand','Pipe Welder',
+  'Pipe Fitter Chargehand','Pipe Fitter','PWHT Chargehand','PWHT','General Operative','Welding Consumables Controller','Materials Controller','Firewatcher','QC Inspector','Telescopic Handler Operator'];
+let hcDraft=null;
+function hcTitle(n){const k=(n&&n.dateKey)||'';const m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(k);
+  return 'W12 Night Shift – Headcount – '+(m?m[3]+'.'+m[2]+'.'+m[1]:(n&&n.label)||'')}
+function hcKnown(){const s=new Set(HC_TRADES);for(const n of allNights())if(n.headcount&&n.headcount.rows)for(const r of n.headcount.rows)s.add(r[0]);return [...s]}
+function hcFixTrade(t){
+  const c=String(t).replace(/\s+/g,' ').trim();if(!c)return '';
+  const low=c.toLowerCase().replace(/[^a-z]/g,'');let best='',bd=99;
+  for(const k of hcKnown()){const d=lev(low,k.toLowerCase().replace(/[^a-z]/g,''));if(d<bd){bd=d;best=k}}
+  return bd<=Math.max(1,Math.floor(best.length/5))?best:c;
+}
+/* text in, rows out: works for the box table, a WhatsApp/markdown table, or "Plater 16" lines */
+function hcParse(text){
+  const rows=[];let total=null,date='';
+  for(let ln of String(text).split(/\r?\n/)){
+    const dm=/(\d{1,2})[.\/](\d{1,2})[.\/](\d{2,4})/.exec(ln);if(dm&&/head\s*count/i.test(ln)){date=dm[0];continue}
+    ln=ln.replace(/[│┃|┌┐└┘├┤┬┴┼─━═*_`]/g,' ').replace(/\s+/g,' ').trim();
+    if(!ln||/^trade\b/i.test(ln)||/^:?-+:?$/.test(ln))continue;
+    const m=/^(.*?)[\s:–-]*(\d{1,4})$/.exec(ln);if(!m)continue;
+    let name=m[1].replace(/\(.*?\)/g,' ').replace(/[^A-Za-z&/ ]/g,' ').replace(/\s+/g,' ').trim();
+    const n=+m[2];if(!name)continue;
+    if(/^tota?l/i.test(name)){total=n;continue}
+    rows.push([hcFixTrade(name),n]);
+  }
+  return {rows,total,date};
+}
+async function hcReadImage(file,progress){
+  const bmp=await createImageBitmap(file);
+  const sc=bmp.width<1400?Math.min(3,1800/bmp.width):1;const W=Math.round(bmp.width*sc),H=Math.round(bmp.height*sc);
+  const cv=document.createElement('canvas');cv.width=W;cv.height=H;const cx=cv.getContext('2d',{willReadFrequently:true});
+  cx.fillStyle='#fff';cx.fillRect(0,0,W,H);cx.drawImage(bmp,0,0,W,H);
+  // white-on-blue header and coloured rows read better as plain dark-on-white
+  const img=cx.getImageData(0,0,W,H),p=img.data;
+  for(let i=0;i<p.length;i+=4){const l=0.299*p[i]+0.587*p[i+1]+0.114*p[i+2];const sat=Math.max(p[i],p[i+1],p[i+2])-Math.min(p[i],p[i+1],p[i+2]);
+    const v=(l<90&&sat>40)?255:(l<150?0:255);p[i]=p[i+1]=p[i+2]=v}
+  // paint out the table lines so the reader sees only words
+  for(let x=0;x<W;x++){let run=0,best=0;for(let y=0;y<H;y++){if(!p[(y*W+x)*4]){run++;if(run>best)best=run}else run=0}
+    if(best>H*0.15)for(let y=0;y<H;y++){const k=(y*W+x)*4;p[k]=p[k+1]=p[k+2]=255}}
+  for(let y=0;y<H;y++){let n=0;for(let x=0;x<W;x++)if(!p[(y*W+x)*4])n++;if(n>W*0.4)for(let x=0;x<W;x++){const k=(y*W+x)*4;p[k]=p[k+1]=p[k+2]=255}}
+  cx.putImageData(img,0,0);
+  const worker=await getOcr((s,pr)=>progress(s==='recognizing text'?'Reading… '+Math.round((pr||0)*100)+'%':'Loading the text reader…'));
+  progress('Reading…');
+  const res=await worker.recognize(cv);
+  const words=((res&&res.data&&res.data.words)||[]).filter(w=>w.text&&w.text.trim()).map(w=>({t:w.text.trim(),y:(w.bbox.y0+w.bbox.y1)/2,x:w.bbox.x0,h:w.bbox.y1-w.bbox.y0}));
+  words.sort((a,b)=>a.y-b.y);const lines=[];
+  for(const w of words){const l=lines[lines.length-1];if(l&&Math.abs(l.y-w.y)<Math.max(8,w.h*0.6)){l.w.push(w);l.y=(l.y+w.y)/2}else lines.push({y:w.y,w:[w]})}
+  const text=lines.map(l=>l.w.sort((a,b)=>a.x-b.x).map(w=>w.t).join(' ')).join('\n');
+  // the header row is white on blue and gets painted out above, so a title-ish line is enough
+  return hcParse(text.replace(/[|!]/g,' ').replace(/O(?=\d)|(?<=\d)O/g,'0').replace(/(?<=\s)[Il](?=\s*$)/gm,'1'));
+}
+function openHeadcount(){
+  if(!cur){toast('Load a night first');return}
+  const h=cur.headcount;
+  const tbl=h&&h.rows&&h.rows.length?`<table class="hct"><caption>${esc(h.title||hcTitle(cur))}</caption><thead><tr><th>Trade</th><th>Count</th></tr></thead><tbody>
+    ${h.rows.map(r=>`<tr><td>${esc(r[0])}</td><td>${r[1]}</td></tr>`).join('')}</tbody><tfoot><tr><td>TOTAL</td><td>${h.rows.reduce((a,r)=>a+(+r[1]||0),0)}</td></tr></tfoot></table>
+    <p class="nc">Added by ${esc(h.byName||'someone')} · ${esc(fmtDT(h.at))}. It prints under the report when you export Excel.</p>`
+    :`<p>No headcount for <strong>${esc(cur.label)}</strong> yet. Upload the headcount picture (or paste the table text) and it prints under the report when you export Excel.</p>`;
+  openView('hc',`<h3>Headcount</h3>${tbl}
+    ${canWrite?`<div class="grid2"><button class="btn" type="button" id="hcPic">Upload picture</button><button class="btn alt" type="button" id="hcTxt">Paste text</button></div>
+    ${h?`<div class="grid2"><button class="btn alt" type="button" id="hcEdit">Edit</button><button class="btn alt danger" type="button" id="hcDel">Remove</button></div>`:''}
+    <input type="file" id="hcFile" accept="image/*,.txt,text/plain" hidden>`:''}
+    <button class="ghost" type="button" id="hcClose">Close</button>`);
+  const on=(id,f)=>{const b=$('#'+id);if(b)b.onclick=f};
+  on('hcClose',closeSheet);on('hcPic',()=>$('#hcFile').click());on('hcTxt',hcPaste);
+  on('hcEdit',()=>{hcDraft={rows:h.rows.map(r=>[r[0],r[1]]),total:null,date:''};hcReview()});
+  on('hcDel',()=>{openView('hcDel',`<h3>Remove tonight's headcount?</h3><p>It will no longer print under the report.</p>
+    <div class="grid2"><button class="btn alt" type="button" id="dNo">Keep</button><button class="btn danger" type="button" id="dYes">Remove</button></div>`);
+    $('#dNo').onclick=openHeadcount;$('#dYes').onclick=()=>{hcSave(null)}});
+  const fi=$('#hcFile');if(fi)fi.onchange=async e=>{const f=e.target.files[0];e.target.value='';if(!f)return;
+    if(/^text\//.test(f.type)||/\.txt$/i.test(f.name)){hcDraft=hcParse(await f.text());hcReview();return}
+    openView('hcRead',`<h3>Reading the headcount</h3><p id="hcMsg">Preparing…</p><button class="ghost" type="button" id="hcCancel">Cancel</button>`);
+    $('#hcCancel').onclick=openHeadcount;
+    try{const d=await hcReadImage(f,t=>{const m=$('#hcMsg');if(m)m.textContent=t});if(sheetView!=='hcRead')return;
+      if(!d.rows.length)throw new Error('No Trade / Count rows were found in this picture.');hcDraft=d;hcReview()}
+    catch(err){if(sheetView!=='hcRead')return;openView('hcErr',`<h3>Could not read the picture</h3><p class="err">${esc(err.message||'Unknown error')}</p><p>You can paste the table text instead.</p>
+      <div class="grid2"><button class="btn alt" type="button" id="eBack">Back</button><button class="btn" type="button" id="ePaste">Paste text</button></div>`);
+      $('#eBack').onclick=openHeadcount;$('#ePaste').onclick=hcPaste}};
+}
+function hcPaste(){
+  openView('hcPaste',`<h3>Paste the headcount</h3><p>Paste the table as text (the copied table, or one trade per line like "Plater 16").</p>
+    <textarea id="hcText" rows="10" placeholder="Staff 9&#10;Plater Chargehand 6&#10;Plater 16"></textarea>
+    <div class="grid2"><button class="btn alt" type="button" id="pBack">Back</button><button class="btn" type="button" id="pGo">Next</button></div>`);
+  $('#pBack').onclick=openHeadcount;
+  $('#pGo').onclick=()=>{const d=hcParse($('#hcText').value);if(!d.rows.length){toast('No "Trade count" lines found');return}hcDraft=d;hcReview()};
+  setTimeout(()=>{const t=$('#hcText');if(t)t.focus()},50);
+}
+function hcReview(){
+  const d=hcDraft;const sum=()=>d.rows.reduce((a,r)=>a+(+r[1]||0),0);
+  const want=hcTitle(cur).split('– ').pop();const dn=d.date?d.date.replace(/\//g,'.').replace(/\b(\d)\b/g,'0$1').replace(/\.(\d{2})$/,'.20$1'):'';
+  openView('hcRev',`<h3>Check the headcount</h3><p class="nc">${esc(hcTitle(cur))}</p>
+    ${dn&&dn!==want?`<p class="err">The picture says <strong>${esc(d.date)}</strong> but this night is <strong>${esc(want)}</strong>. Make sure it is tonight's headcount.</p>`:''}
+    <div id="hcRows" class="hcrows">${d.rows.map((r,i)=>`<div class="hcr"><input aria-label="Trade" data-i="${i}" data-k="0" value="${esc(r[0])}" list="hcList"><input aria-label="Count" data-i="${i}" data-k="1" inputmode="numeric" value="${r[1]}"><button type="button" class="ghost" data-del="${i}" aria-label="Delete row">✕</button></div>`).join('')}</div>
+    <datalist id="hcList">${hcKnown().map(t=>`<option value="${esc(t)}"></option>`).join('')}</datalist>
+    <button class="ghost" type="button" id="hcAdd">+ Add row</button>
+    <p id="hcSum"></p>
+    <div class="grid2"><button class="btn alt" type="button" id="rBack">Cancel</button><button class="btn" type="button" id="rSave">Save</button></div>`);
+  const showSum=()=>{const s=sum();$('#hcSum').innerHTML=`TOTAL <strong>${s}</strong>`+(d.total!=null&&d.total!==s?` <span class="err">· the picture says ${d.total}, check the rows</span>`:'')};showSum();
+  $('#hcRows').oninput=e=>{const t=e.target;if(t.dataset.i==null)return;const r=d.rows[+t.dataset.i];if(t.dataset.k==='0')r[0]=t.value;else r[1]=parseInt(t.value,10)||0;showSum()};
+  $('#hcRows').onclick=e=>{const b=e.target.closest('[data-del]');if(!b)return;d.rows.splice(+b.dataset.del,1);hcReview()};
+  $('#hcAdd').onclick=()=>{d.rows.push(['',0]);hcReview();const ins=$('#hcRows').querySelectorAll('input[data-k="0"]');if(ins.length)ins[ins.length-1].focus()};
+  $('#rBack').onclick=openHeadcount;
+  $('#rSave').onclick=()=>{const rows=d.rows.map(r=>[String(r[0]).trim(),+r[1]||0]).filter(r=>r[0]);if(!rows.length){toast('Add at least one row');return}
+    hcSave({title:hcTitle(cur),rows,at:Date.now(),by:authUser.uid,byName:myName()})};
+}
+function hcSave(h){
+  if(!cur||!canWrite)return;const id=cur.id;cur.headcount=h;
+  db.doc(P('nights')+'/'+id).merge({headcount:h}).then(()=>toast(h?'Headcount saved':'Headcount removed')).catch(e=>toast('Not saved ('+(e.code||'error')+')'));
+  openHeadcount();
+}
 /* ---------- events, with a check before changing someone else's entry or a DONE job ---------- */
 const okUntil={};   // after confirming once, further edits to the same job go through for a short while
 function guard(id,it,next,newVal,col){
@@ -1133,7 +1535,10 @@ document.addEventListener('change',e=>{const t=e.target;if(t.dataset&&t.dataset.
   guard(id,it,()=>{st[id].extra.push(v);rerenderCard(id);writeItem(id)});if(!(okUntil[id]>Date.now()))t.value=''}});
 $('#btnNew').addEventListener('click',()=>{if(!canWrite){toast('View only: ask the night shift lead for Contributor access');return}$('#fileInput').click()});
 $('#fileInput').addEventListener('change',async e=>{
-  const f=e.target.files[0];e.target.value='';if(!f)return;
+  const all=[...e.target.files];e.target.value='';if(!all.length)return;
+  const imgs=all.filter(x=>/^image\//.test(x.type)||/\.(png|jpe?g|webp|heic)$/i.test(x.name));
+  if(imgs.length){if(!canWrite){toast('View only: ask the night shift lead for Contributor access');return}openPhotoImport(imgs);return}
+  const f=all[0];
   toast('Checking '+f.name+'…');
   try{await uploadDabs(f)}
   catch(err){openSheet(`<h3>Could not load this file</h3><p class="err">${esc(err.message||err.code||'Unknown error')}</p><button class="btn" type="button" id="cOk">OK</button>`);$('#cOk').onclick=closeSheet}
@@ -1305,6 +1710,7 @@ async function buildXlsx(){
     }
   }
   // activities added on the night: own block under the sheet, same columns as the section
+  const borderRanges=[];
   let maxRow=0;for(const re of kids(sheetData,'row'))maxRow=Math.max(maxRow,+re.getAttribute('r'));
   let maxCol=0;
   doc.sections.forEach((sec,si)=>{
@@ -1330,6 +1736,7 @@ async function buildXlsx(){
     }
     if(sec.trades.length){const t1=Math.min(...sec.trades.map(t=>t.col)),t2=Math.max(...sec.trades.map(t=>t.col));
       ranges.push({ref:colName(t1)+r1+':'+colName(t2)+r,tl:colName(t1)+r1})}
+    borderRanges.push([r1-1,r,c1,c2]);
     maxRow=r;
   });
   // report stamp at the top right
@@ -1347,7 +1754,7 @@ async function buildXlsx(){
     const xT=addXf(fT),xH=addXf(fH,{border,wrap:true}),xR=addXf(fR,{border,wrap:true,v:'top'});
     let r=maxRow+3;
     setText(cellEl(r,2),'CONCERN LIST · open items carried over and tonight\'s concerns ('+cl.filter(c=>!c.resolved).length+' open)',xT);
-    r+=2;
+    r+=2;const r0=r;
     const cols=[[2,'Type'],[3,'Trade'],[4,'Entered by'],[5,'Date / time'],[6,'Description'],[11,'Status']];
     let mc=kid(wroot,'mergeCells');if(!mc){mc=E(sx,'mergeCells',{count:'0'});insertOrdered(wroot,mc)}
     const merge=ref=>{mc.appendChild(E(sx,'mergeCell',{ref}));mc.setAttribute('count',String(mc.children.length))};
@@ -1358,8 +1765,42 @@ async function buildXlsx(){
       const lines=Math.max(1,Math.ceil(String(c.desc).length/80),String(c.desc).split('\n').length,Math.ceil(String(vals[11]).length/22));
       const re=rowEl(r);re.setAttribute('ht',String(Math.max(15,14*lines)));re.setAttribute('customHeight','1');
     }
+    borderRanges.push([r0,r,2,11]);
     maxRow=r;maxCol=Math.max(maxCol,11);
   }
+  // tonight's headcount, under everything else on the same sheet (Trade over B:D, Count in E)
+  const hc=cur&&cur.headcount;
+  if(hc&&hc.rows&&hc.rows.length){
+    const fillOf=rgb=>{const f=E(sy,'fill'),p=E(sy,'patternFill',{patternType:'solid'});p.appendChild(E(sy,'fgColor',{rgb}));p.appendChild(E(sy,'bgColor',{indexed:'64'}));f.appendChild(p);fills.appendChild(f);recount(fills);return fills.children.length-1};
+    const fBlue=fillOf('FF1F3864'),fGrey=fillOf('FFF2F2F2'),fYel=fillOf('FFFFE699');
+    const xTi=addXf(addFont({b:true,sz:13,color:'FF000000'}));
+    const fW=addFont({b:true,sz:11,color:'FFFFFFFF'}),fN=addFont({sz:11,color:'FF000000'}),fB=addFont({b:true,sz:11,color:'FF000000'});
+    const X={hL:addXf(fW,{fill:fBlue}),hC:addXf(fW,{fill:fBlue,h:'center'}),wL:addXf(fN),wC:addXf(fN,{h:'center'}),gL:addXf(fN,{fill:fGrey}),gC:addXf(fN,{fill:fGrey,h:'center'}),tL:addXf(fB,{fill:fYel}),tC:addXf(fB,{fill:fYel,h:'center'})};
+    let mc=kid(wroot,'mergeCells');if(!mc){mc=E(sx,'mergeCells',{count:'0'});insertOrdered(wroot,mc)}
+    const merge=ref=>{mc.appendChild(E(sx,'mergeCell',{ref}));mc.setAttribute('count',String(mc.children.length))};
+    let r=maxRow+3;
+    setText(cellEl(r,2),hc.title||hcTitle(cur),xTi);rowEl(r).setAttribute('ht','20');rowEl(r).setAttribute('customHeight','1');
+    r+=2;const r0=r;
+    const line=(a,b,L,C)=>{setText(cellEl(r,2),a,L);setText(cellEl(r,3),'',L);setText(cellEl(r,4),'',L);
+      const ce=cellEl(r,5);while(ce.firstChild)ce.removeChild(ce.firstChild);ce.removeAttribute('t');
+      if(typeof b==='number'){const v=E(sx,'v');v.textContent=String(b);ce.appendChild(v);ce.setAttribute('s',String(C))}else setText(ce,b,C);
+      merge('B'+r+':D'+r);const re=rowEl(r);re.setAttribute('ht','18');re.setAttribute('customHeight','1')};
+    line('Trade','Count',X.hL,X.hC);
+    hc.rows.forEach((x,i)=>{r++;line(String(x[0]),+x[1]||0,i%2?X.gL:X.wL,i%2?X.gC:X.wC)});
+    r++;line('TOTAL',hc.rows.reduce((a,x)=>a+(+x[1]||0),0),X.tL,X.tC);
+    borderRanges.push([r0,r,2,5]);
+    maxRow=r;maxCol=Math.max(maxCol,5);
+  }
+  // every cell of each table gets a full thin border, so the printout has no missing lines
+  {const sb=kid(sroot,'borders')||getOrMake('borders');
+    const full=E(sy,'border');for(const side of ['left','right','top','bottom']){const e=E(sy,side,{style:'thin'});e.appendChild(E(sy,'color',{auto:'1'}));full.appendChild(e)}full.appendChild(E(sy,'diagonal'));
+    sb.appendChild(full);recount(sb);const fullId=sb.children.length-1;
+    const hasAll=bid=>{const bb=sb.children[bid];return !!bb&&['left','right','top','bottom'].every(n=>{const e=kid(bb,n);return e&&e.getAttribute('style')})};
+    const bx={};const withBorder=sv=>{if(sv in bx)return bx[sv];const xf=xfs.children[sv]||xfs.children[0];if(hasAll(+(xf.getAttribute('borderId')||0)))return bx[sv]=sv;
+      const n=xf.cloneNode(true);n.setAttribute('borderId',String(fullId));n.setAttribute('applyBorder','1');xfs.appendChild(n);recount(xfs);return bx[sv]=xfs.children.length-1};
+    for(const sec of doc.sections){if(!sec.items.length)continue;const cs=sec.hdr.map(([c])=>c);cs.push(sec.cols.remark);
+      borderRanges.push([sec.header,sec.items[sec.items.length-1].row,Math.min(...cs),Math.max(...cs)])}
+    for(const [ra,rb,ca,cb] of borderRanges)for(let r=ra;r<=rb;r++)for(let c=ca;c<=cb;c++){const ce=cellEl(r,c);ce.setAttribute('s',String(withBorder(+(ce.getAttribute('s')||0))))}}
   const dim=kid(wroot,'dimension');
   if(dim&&maxRow){const ref=dim.getAttribute('ref')||'A1';const [a,b]=ref.split(':');const end=b||a;const [ec,er]=splitRef(end);
     dim.setAttribute('ref',(b?a:'A1')+':'+colName(Math.max(ec,maxCol))+Math.max(er,maxRow))}
@@ -1387,6 +1828,7 @@ $('#btnExport').addEventListener('click',()=>{
   const c=counts();const open=openConcerns().length;
   openView('exportCheck',`<h3>Before you export</h3>
     <p><strong>Did you update the concern list?</strong> ${open?`There ${open===1?'is':'are'} <strong>${open}</strong> open ${open===1?'item':'items'}; ${open===1?'it prints':'they print'} in red under the DABS.`:'It is empty, so nothing will print under the DABS.'}</p>
+    <p><strong>Headcount:</strong> ${cur&&cur.headcount?'added, it prints under the report.':'not added for tonight. Add it from Menu → Headcount if it should be in the report.'}</p>
     ${c.unset?`<p><strong>${c.unset}</strong> ${c.unset===1?'activity has':'activities have'} not been updated and will be exported as NOT DONE.</p>`:''}
     <div class="grid2"><button class="btn alt" type="button" id="exCn">Open concern list</button><button class="btn" type="button" id="exGo">Export Excel</button></div>
     <button class="ghost" type="button" id="exNo">Cancel</button>`);
