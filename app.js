@@ -2,6 +2,7 @@ import {initializeApp} from 'https://www.gstatic.com/firebasejs/10.12.2/firebase
 import {getAuth,onAuthStateChanged,signInWithEmailAndPassword,createUserWithEmailAndPassword,sendPasswordResetEmail,sendEmailVerification,updateProfile,signOut,GoogleAuthProvider,signInWithPopup} from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
 import {initializeFirestore,persistentLocalCache,persistentMultipleTabManager,doc as fdoc,collection as fcol,getDoc,getDocs,setDoc,updateDoc,deleteDoc,onSnapshot as fsnap,query as fquery,orderBy as forder,limit as flimit} from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 import {firebaseConfig,OWNER_EMAIL,ENV} from './firebase-config.js';
+const APP_VERSION='2.0.10291949-test';
 
 
 const NS='http://schemas.openxmlformats.org/spreadsheetml/2006/main';
@@ -626,7 +627,7 @@ function parsePeopleLines(text,defTrade){
 }
 function openPeople(){
   const crafts=[...new Set([...peopleList.map(p=>p.trade),...Object.values(settings.mapping||{}).flat()].filter(Boolean))].sort();
-  openView('people',`<h3>People</h3>
+  openView('people',`<h3>Personel</h3>
     <div id="pplSum" class="pplsum"></div>
     ${isAdmin?`<details class="pplAdd"><summary>Add people</summary>
       <form id="pplOne" novalidate class="pplform">
@@ -639,7 +640,7 @@ function openPeople(){
         <label for="pp_def">Trade for lines without one<input id="pp_def" list="craftList" autocomplete="off"></label>
         <p class="nc" id="pp_prev"></p>
         <button class="btn alt" type="submit">Add list</button></form>
-      <datalist id="craftList">${crafts.map(c=>`<option value="${esc(c)}"></option>`).join('')}</datalist></details>`:'<p>Only admins can change the people list.</p>'}
+      <datalist id="craftList">${crafts.map(c=>`<option value="${esc(c)}"></option>`).join('')}</datalist></details>`:`<p class="err">You are signed in as ${esc(authUser&&authUser.email||'')} (${canWrite?'Contributor':'Viewer'}). Only admins can add, edit or remove people.</p>`}
     <label for="pp_find" class="pplfind">Search<input id="pp_find" placeholder="Name, SAP no. or trade" autocomplete="off"></label>
     <div id="pplList"></div>
     <button class="ghost" type="button" id="ppClose">Close</button>`);
@@ -653,12 +654,30 @@ function openPeople(){
     $('#pplBulk').onsubmit=async e=>{e.preventDefault();const list=parsePeopleLines($('#pp_bulk').value,$('#pp_def').value.trim());if(!list.length){toast('Paste at least one name');return}
       await addPeople(list);$('#pp_bulk').value='';prev()};
   }
-  $('#panel').onclick=e=>{const b=e.target.closest('[data-prm]');if(!b)return;const p=peopleList.find(x=>x.id===b.dataset.prm);if(!p)return;
+  $('#panel').onclick=e=>{
+    const ed=e.target.closest('[data-ped]');if(ed){const p=peopleList.find(x=>x.id===ed.dataset.ped);if(p)editPerson(p);return}
+    const b=e.target.closest('[data-prm]');if(!b)return;const p=peopleList.find(x=>x.id===b.dataset.prm);if(!p)return;
     const row=$('#pr-'+p.id);row.innerHTML=`<div class="nl"><strong>Remove ${esc(p.name)}?</strong><span class="nf">${esc(p.trade||'No trade')}${p.sap?' · '+esc(p.sap):''}. They will no longer appear on the sign-in sheets.</span></div>
       <div class="nb"><button class="btn alt" type="button" data-pkeep="1">Keep</button><button class="btn danger" type="button" data-pyes="${p.id}">Remove</button></div>`;
     row.querySelector('[data-pkeep]').onclick=renderPeopleList;
     row.querySelector('[data-pyes]').onclick=async()=>{try{await db.doc(P('people')+'/'+p.id).delete();toast(p.name+' removed')}catch(err){toast('Not removed ('+(err.code||'error')+')')}}};
   renderPeopleList();
+}
+function editPerson(p){
+  const row=$('#pr-'+p.id);if(!row)return;
+  row.innerHTML=`<form class="pplform pedit" novalidate style="width:100%">
+    <label for="pe_name_${p.id}">Name<input id="pe_name_${p.id}" value="${esc(p.name)}" autocomplete="off"></label>
+    <div class="grid2"><label for="pe_sap_${p.id}">SAP no. (badge)<input id="pe_sap_${p.id}" value="${esc(p.sap||'')}" inputmode="numeric" autocomplete="off"></label>
+    <label for="pe_trade_${p.id}">Trade / role<input id="pe_trade_${p.id}" value="${esc(p.trade||'')}" list="craftList" autocomplete="off"></label></div>
+    <div class="grid2"><button class="btn alt" type="button" data-pcancel="1">Cancel</button><button class="btn" type="submit">Save</button></div></form>`;
+  row.querySelector('[data-pcancel]').onclick=renderPeopleList;
+  row.querySelector('form').onsubmit=async e=>{e.preventDefault();
+    const name=$('#pe_name_'+p.id).value.trim();if(!name){toast('Name cannot be empty');return}
+    let trade=$('#pe_trade_'+p.id).value.trim();if(normTrade(trade)==='generaloperative')trade='General Operative';
+    const upd={name,sap:$('#pe_sap_'+p.id).value.trim(),trade,editedAt:Date.now(),editedByName:myName()};
+    try{await db.doc(P('people')+'/'+p.id).update(upd);Object.assign(p,upd);toast('Saved');renderPeopleList()}
+    catch(err){toast('Not saved ('+(err.code||'error')+')')}};
+  $('#pe_trade_'+p.id).focus();
 }
 async function addPeople(list){
   let addedN=0,skipped=0;
@@ -674,11 +693,14 @@ async function addPeople(list){
 function renderPeopleList(){
   const el=$('#pplList');if(!el)return;
   const q=($('#pp_find')&&$('#pp_find').value||'').toLowerCase();
-  const groups=new Map();for(const p of peopleList){const t=p.trade||'No trade';if(!groups.has(t))groups.set(t,[]);groups.get(t).push(p)}
+  const groups=new Map(),labels=new Map();
+  for(const p of peopleList){const k=normTrade(p.trade)||'~';if(!groups.has(k)){groups.set(k,[]);labels.set(k,p.trade||'No trade')}
+    if(p.trade&&p.trade!==p.trade.toUpperCase())labels.set(k,p.trade);groups.get(k).push(p)}
+  for(const [k,v] of [...groups])if(labels.get(k)!==k){groups.delete(k);groups.set(labels.get(k),v)}
   const sorted=[...groups.entries()].sort((a,b)=>a[0].localeCompare(b[0]));
   $('#pplSum').innerHTML=`<div class="pplTotal"><b>${peopleList.length}</b> people</div>`+sorted.map(([t,ps])=>`<span class="pchip"><b>${ps.length}</b> ${esc(t)}</span>`).join('');
   el.innerHTML=sorted.map(([t,ps])=>{const vis=ps.filter(p=>!q||(p.name+' '+p.sap+' '+t).toLowerCase().includes(q)).sort((a,b)=>a.name.localeCompare(b.name));if(!vis.length)return '';
-    return `<section class="pgrp"><h4>${esc(t)} <span class="nc">${ps.length}</span></h4><div class="nights">${vis.map(p=>`<div class="night" id="pr-${p.id}"><div class="nl"><strong>${esc(p.name)}</strong><span class="nf">${p.sap?'SAP '+esc(p.sap):'No SAP no.'}</span></div>${isAdmin?`<div class="nb"><button class="link danger" type="button" data-prm="${p.id}">Remove</button></div>`:''}</div>`).join('')}</div></section>`}).join('')
+    return `<section class="pgrp"><h4>${esc(t)} <span class="nc">${ps.length}</span></h4><div class="nights">${vis.map(p=>`<div class="night" id="pr-${p.id}"><div class="nl"><strong>${esc(p.name)}</strong><span class="nf">${p.sap?'SAP '+esc(p.sap):'No SAP no.'}</span></div>${isAdmin?`<div class="nb"><button class="link" type="button" data-ped="${p.id}">Edit</button><button class="link danger" type="button" data-prm="${p.id}">Remove</button></div>`:''}</div>`).join('')}</div></section>`}).join('')
     ||'<p>No people yet.'+(isAdmin?' Use Add people to paste the lists for each trade.':'')+'</p>';
 }
 
@@ -772,13 +794,13 @@ function openMenu(){
     ${it('mArchive','Archive','Earlier nights, open or delete')}
     ${it('mConcerns','Concern list',openConcerns().length+' open')}
     ${it('mBrief','Daily Activity Briefing','Word documents for each trade',!!doc)}
-    ${it('mPeople','People',peopleList.length+' on the lists')}
+    ${it('mPeople','Personel',peopleList.length+' people · edit names and roles')}
     ${it('mReplace','Replace tonight\'s DABS','Load a corrected file for '+(cur?cur.label:''),isAdmin&&!!cur)}
     ${it('mSettings','Settings','Briefing details and sign-in crafts',isAdmin)}
     ${it('mTeam','Team & approvals','Who can use the app',isAdmin)}
     ${it('mCopy','Copy live nights into test','Test version only: practise with real DABS',ENV==='test'&&isAdmin)}
     </div>
-    <div class="bk"><h4>Account</h4><p>Signed in as <strong>${esc(myName())}</strong> (${esc(authUser&&authUser.email||'')}) · ${role}</p>
+    <div class="bk"><h4>Account</h4><p>Signed in as <strong>${esc(myName())}</strong> (${esc(authUser&&authUser.email||'')}) · ${role}</p><p class="nc">App version ${APP_VERSION}</p>
       <button class="btn alt" type="button" id="signOut">Sign out</button></div>
     ${standalone()?'':`<div class="bk"><h4>Install on your phone</h4>${installPrompt?'<button class="btn" type="button" id="doInstall">Install app</button>':''}
       <p><strong>Android (Chrome):</strong> menu ⋮ → Install app.<br><strong>iPhone (Safari):</strong> Share button → Add to Home Screen.</p></div>`}
@@ -858,12 +880,14 @@ function briefingData(){
   b.trades=b.trades||{};
   for(const T of dabsTrades().filter(t=>tradeItems(t).length||settings.mapping[t])){
     const t=b.trades[T]=b.trades[T]||{};
-    if(t.today==null)t.today=suggestToday(T);
-    if(t.prev==null)t.prev=suggestPrev(T);
-    if(t.notWell==null)t.notWell=suggestNotWell(T);
+    // suggestions stay up to date until someone types in that box
+    t.edited=t.edited||{};const ed=f=>t.edited[f]&&t[f]!=null;
+    if(!ed('today'))t.today=suggestToday(T);
+    if(!ed('prev'))t.prev=suggestPrev(T);
+    if(!ed('notWell'))t.notWell=suggestNotWell(T);
     if(t.well==null)t.well='';
-    if(t.other==null)t.other=settings.otherTeams||'';
-    if(t.site==null)t.site=settings.siteNews||'';
+    if(!ed('other'))t.other=settings.otherTeams||'';
+    if(!ed('site'))t.site=settings.siteNews||'';
     if(t.bh==null)t.bh='';
   }
   return b;
@@ -907,10 +931,10 @@ function openBriefing(){
   const bindCommon=(id,k)=>{$(id).oninput=e=>{brief[k]=e.target.value;saveBriefing()}};
   bindCommon('#bf_ic','ic');bindCommon('#bf_tmic','tmic');bindCommon('#bf_fa','firstAider');
   for(const [id,k] of [['#bf_bh','bh'],['#bf_prev','prev'],['#bf_well','well'],['#bf_notWell','notWell'],['#bf_today','today'],['#bf_other','other'],['#bf_site','site']])
-    $(id).oninput=e=>{brief.trades[briefTrade][k]=e.target.value;saveBriefing()};
+    $(id).oninput=e=>{const t=brief.trades[briefTrade];t[k]=e.target.value;t.edited=t.edited||{};t.edited[k]=true;saveBriefing()};
   for(const b of document.querySelectorAll('[data-bt]'))b.onclick=()=>{briefTrade=b.dataset.bt;openBriefing()};
   const rs=$('#bf_reset');if(rs)rs.onclick=()=>{const T=briefTrade;const k=brief.trades[T];
-    Object.assign(k,{today:suggestToday(T),prev:suggestPrev(T),notWell:suggestNotWell(T),other:settings.otherTeams||'',site:settings.siteNews||''});saveBriefing();openBriefing()};
+    Object.assign(k,{edited:{},today:suggestToday(T),prev:suggestPrev(T),notWell:suggestNotWell(T),other:settings.otherTeams||'',site:settings.siteNews||''});saveBriefing();openBriefing()};
   $('#bf_one').onclick=()=>downloadBriefing([briefTrade]);
   $('#bf_all').onclick=()=>downloadBriefing(trades);
 }
