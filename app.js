@@ -553,9 +553,9 @@ const DEFAULT_SETTINGS={
   otherTeams:'Rigging/Scaffolding teams will be working in the same areas, communicate with other teams in the area and make them aware of what your task is, use barriers to segregate the area and clear signage to warn others in the vicinity.\nMaintain clear communication, good housekeeping and cable management.',
   siteNews:'Radiography in areas on -5/0 Level, be aware of barriers around the controlled vicinity – always obey barriers if in doubt ask.\nLifting operations, be aware of your surroundings, do not cross barriers, communicate with other work parties.',
   mapping:{
-    Plating:['Plater','Plater Chargehand'],
-    Piping:['Pipe Fitter','Pipe Fitter Chargehand','Welder','PWHT Operator','PWHT Chargehand','General Operative'],
-    Lifting:['Rigger','Rigger Chargehand','Crane Operator'],
+    Plating:['Plater','Mechanical Working Chargehand (Plater)'],
+    Piping:['Pipe Fitter','Pipe Welder','Pipe Welder Working Chargehand','Post Weld Heat Treatment Operator','Post Weld Heat Treatment Supervisor (Blue Hat)','Materials Controller','General Labourer','Firewatcher'],
+    Lifting:['Rigger','Rigger Working Chargehand','Telescopic Handler Operator'],
     Scaffolding:['Scaffolder Basic','Scaffolder Advanced','Scaffold Working Chargehand','Scaffold Inspector'],
     QC:['QC Inspector']
   }
@@ -653,12 +653,30 @@ function openPeople(){
     $('#pplBulk').onsubmit=async e=>{e.preventDefault();const list=parsePeopleLines($('#pp_bulk').value,$('#pp_def').value.trim());if(!list.length){toast('Paste at least one name');return}
       await addPeople(list);$('#pp_bulk').value='';prev()};
   }
-  $('#panel').onclick=e=>{const b=e.target.closest('[data-prm]');if(!b)return;const p=peopleList.find(x=>x.id===b.dataset.prm);if(!p)return;
+  $('#panel').onclick=e=>{
+    const ed=e.target.closest('[data-ped]');if(ed){const p=peopleList.find(x=>x.id===ed.dataset.ped);if(p)editPerson(p);return}
+    const b=e.target.closest('[data-prm]');if(!b)return;const p=peopleList.find(x=>x.id===b.dataset.prm);if(!p)return;
     const row=$('#pr-'+p.id);row.innerHTML=`<div class="nl"><strong>Remove ${esc(p.name)}?</strong><span class="nf">${esc(p.trade||'No trade')}${p.sap?' · '+esc(p.sap):''}. They will no longer appear on the sign-in sheets.</span></div>
       <div class="nb"><button class="btn alt" type="button" data-pkeep="1">Keep</button><button class="btn danger" type="button" data-pyes="${p.id}">Remove</button></div>`;
     row.querySelector('[data-pkeep]').onclick=renderPeopleList;
     row.querySelector('[data-pyes]').onclick=async()=>{try{await db.doc(P('people')+'/'+p.id).delete();toast(p.name+' removed')}catch(err){toast('Not removed ('+(err.code||'error')+')')}}};
   renderPeopleList();
+}
+function editPerson(p){
+  const row=$('#pr-'+p.id);if(!row)return;
+  row.innerHTML=`<form class="pplform pedit" novalidate style="width:100%">
+    <label for="pe_name_${p.id}">Name<input id="pe_name_${p.id}" value="${esc(p.name)}" autocomplete="off"></label>
+    <div class="grid2"><label for="pe_sap_${p.id}">SAP no. (badge)<input id="pe_sap_${p.id}" value="${esc(p.sap||'')}" inputmode="numeric" autocomplete="off"></label>
+    <label for="pe_trade_${p.id}">Trade / role<input id="pe_trade_${p.id}" value="${esc(p.trade||'')}" list="craftList" autocomplete="off"></label></div>
+    <div class="grid2"><button class="btn alt" type="button" data-pcancel="1">Cancel</button><button class="btn" type="submit">Save</button></div></form>`;
+  row.querySelector('[data-pcancel]').onclick=renderPeopleList;
+  row.querySelector('form').onsubmit=async e=>{e.preventDefault();
+    const name=$('#pe_name_'+p.id).value.trim();if(!name){toast('Name cannot be empty');return}
+    let trade=$('#pe_trade_'+p.id).value.trim();if(normTrade(trade)==='generaloperative')trade='General Operative';
+    const upd={name,sap:$('#pe_sap_'+p.id).value.trim(),trade,editedAt:Date.now(),editedByName:myName()};
+    try{await db.doc(P('people')+'/'+p.id).update(upd);Object.assign(p,upd);toast('Saved');renderPeopleList()}
+    catch(err){toast('Not saved ('+(err.code||'error')+')')}};
+  $('#pe_trade_'+p.id).focus();
 }
 async function addPeople(list){
   let addedN=0,skipped=0;
@@ -674,11 +692,14 @@ async function addPeople(list){
 function renderPeopleList(){
   const el=$('#pplList');if(!el)return;
   const q=($('#pp_find')&&$('#pp_find').value||'').toLowerCase();
-  const groups=new Map();for(const p of peopleList){const t=p.trade||'No trade';if(!groups.has(t))groups.set(t,[]);groups.get(t).push(p)}
+  const groups=new Map(),labels=new Map();
+  for(const p of peopleList){const k=normTrade(p.trade)||'~';if(!groups.has(k)){groups.set(k,[]);labels.set(k,p.trade||'No trade')}
+    if(p.trade&&p.trade!==p.trade.toUpperCase())labels.set(k,p.trade);groups.get(k).push(p)}
+  for(const [k,v] of [...groups])if(labels.get(k)!==k){groups.delete(k);groups.set(labels.get(k),v)}
   const sorted=[...groups.entries()].sort((a,b)=>a[0].localeCompare(b[0]));
   $('#pplSum').innerHTML=`<div class="pplTotal"><b>${peopleList.length}</b> people</div>`+sorted.map(([t,ps])=>`<span class="pchip"><b>${ps.length}</b> ${esc(t)}</span>`).join('');
   el.innerHTML=sorted.map(([t,ps])=>{const vis=ps.filter(p=>!q||(p.name+' '+p.sap+' '+t).toLowerCase().includes(q)).sort((a,b)=>a.name.localeCompare(b.name));if(!vis.length)return '';
-    return `<section class="pgrp"><h4>${esc(t)} <span class="nc">${ps.length}</span></h4><div class="nights">${vis.map(p=>`<div class="night" id="pr-${p.id}"><div class="nl"><strong>${esc(p.name)}</strong><span class="nf">${p.sap?'SAP '+esc(p.sap):'No SAP no.'}</span></div>${isAdmin?`<div class="nb"><button class="link danger" type="button" data-prm="${p.id}">Remove</button></div>`:''}</div>`).join('')}</div></section>`}).join('')
+    return `<section class="pgrp"><h4>${esc(t)} <span class="nc">${ps.length}</span></h4><div class="nights">${vis.map(p=>`<div class="night" id="pr-${p.id}"><div class="nl"><strong>${esc(p.name)}</strong><span class="nf">${p.sap?'SAP '+esc(p.sap):'No SAP no.'}</span></div>${isAdmin?`<div class="nb"><button class="link" type="button" data-ped="${p.id}">Edit</button><button class="link danger" type="button" data-prm="${p.id}">Remove</button></div>`:''}</div>`).join('')}</div></section>`}).join('')
     ||'<p>No people yet.'+(isAdmin?' Use Add people to paste the lists for each trade.':'')+'</p>';
 }
 
@@ -814,11 +835,30 @@ async function copyLiveToTest(){
 const lvlShort=l=>String(l||'').replace(/\.0+$/,'').replace(/^([+-]?\d+)\.(\d*?)0+$/,'$1.$2').replace(/\.$/,'');
 function previousNight(){if(!cur)return null;return byDate().filter(n=>n.loadedAt<cur.loadedAt)[0]||null}
 function tradeItems(T){return allItems().filter(it=>tradeNames(it).includes(T))}
+/* Turn the DABS activity into what this trade actually does on that job. */
+const TRADE_WORDS=[
+  ['Lifting',[[/lifting aid/i,'Lifting aid for fit-up'],[/fit.?up/i,'Lifting aid for fit-up'],[/erect/i,'Lifting activity for erection'],[/deliver/i,'Delivery (offload and lift)'],[/skat|movement|move/i,'Skating / load movement'],[/weld/i,'Lifting support for welding'],[/lift/i,'Lifting activity']]],
+  ['Piping',[[/fit.?up/i,'Fit-up activity'],[/weld/i,'Spool welding'],[/erect/i,'Spool erection'],[/lift/i,'Rigging support for lifting'],[/scaffold/i,'Access check for scaffold']]],
+  ['Plating',[[/erect/i,'Support erection'],[/weld/i,'Support welding'],[/fit.?up/i,'Support fit-up'],[/lift/i,'Support lifting preparation']]],
+  ['Scaffolding',[[/scaffold/i,'Scaffold erection for access'],[/strip|dismantl/i,'Scaffold strip'],[/.*/,c=>'Scaffold access for '+c.toLowerCase()]]],
+  ['QC',[[/weld/i,'Weld inspection'],[/fit.?up/i,'Fit-up inspection'],[/.*/,c=>'QC inspection: '+c.toLowerCase()]]]
+];
+function tradeActivity(act,T){
+  const raw=String(act||'').replace(/\s+/g,' ').trim();
+  const pri=(/^(P\d)\s*:\s*/i.exec(raw)||[])[1]||'';
+  const quals=[...raw.matchAll(/\(([^)]+)\)/g)].map(m=>m[1].trim());
+  const core=raw.replace(/^(P\d)\s*:\s*/i,'').replace(/\([^)]*\)/g,'').trim();
+  const rules=(TRADE_WORDS.find(([k])=>normTrade(k)===normTrade(T))||[])[1]||[];
+  let phrase=core;for(const [re,txt] of rules)if(re.test(core)){phrase=typeof txt==='function'?txt(core):txt;break}
+  const q=quals.filter(x=>!phrase.toLowerCase().includes(x.toLowerCase()));
+  return (pri?pri.toUpperCase()+' ':'')+phrase+(q.length?' ('+q.join(', ')+')':'');
+}
 function suggestToday(T){
-  const seen=new Set(),parts=[];
-  for(const it of tradeItems(T)){const k=(it.tag||it.act)+'|'+it.level;if(seen.has(k))continue;seen.add(k);
-    parts.push('*'+(it.tag||it.act)+(it.level&&it.level!=='—'?' ('+lvlShort(it.level)+')':''))}
-  return parts.join(' ');
+  const lines=[],seen=new Set();
+  for(const it of tradeItems(T)){const k=(it.tag||it.act)+'|'+it.level+'|'+it.act;if(seen.has(k))continue;seen.add(k);
+    const act=tradeActivity(it.act,T);
+    lines.push({p:/^P\d/.test(act)?act.slice(0,2):'P9',t:'*'+(it.tag||it.act)+(it.level&&it.level!=='—'?' ('+lvlShort(it.level)+')':'')+' – '+act})}
+  return lines.map((x,i)=>Object.assign(x,{i})).sort((a,b)=>a.p.localeCompare(b.p)||a.i-b.i).map(x=>x.t).join('\n');
 }
 function suggestPrev(T){
   const lines=[];const pn=previousNight();const from=pn?pn.loadedAt:0;
