@@ -2,7 +2,7 @@ import {initializeApp} from 'https://www.gstatic.com/firebasejs/10.12.2/firebase
 import {getAuth,onAuthStateChanged,signInWithEmailAndPassword,createUserWithEmailAndPassword,sendPasswordResetEmail,sendEmailVerification,updateProfile,signOut,GoogleAuthProvider,signInWithPopup} from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
 import {initializeFirestore,persistentLocalCache,persistentMultipleTabManager,doc as fdoc,collection as fcol,getDoc,getDocs,setDoc,updateDoc,deleteDoc,onSnapshot as fsnap,query as fquery,orderBy as forder,limit as flimit} from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 import {firebaseConfig,OWNER_EMAIL,ENV} from './firebase-config.js';
-const APP_VERSION='2.0.10292022-test';
+const APP_VERSION='2.0.10292107-test';
 
 
 const NS='http://schemas.openxmlformats.org/spreadsheetml/2006/main';
@@ -944,7 +944,7 @@ function briefingData(){
     t.edited=t.edited||{};const ed=f=>t.edited[f]&&t[f]!=null;
     if(!ed('today'))t.today=suggestToday(T);
     if(!ed('prev'))t.prev=suggestPrev(T);
-    if(!ed('notWell'))t.notWell=suggestNotWell(T);
+    if(!ed('notWell'))t.notWell='';   // left for the Black Hat to fill in
     if(t.well==null)t.well='';
     if(!ed('other'))t.other=settings.otherTeams||'';
     if(!ed('site'))t.site=settings.siteNews||'';
@@ -994,7 +994,7 @@ function openBriefing(){
     $(id).oninput=e=>{const t=brief.trades[briefTrade];t[k]=e.target.value;t.edited=t.edited||{};t.edited[k]=true;saveBriefing()};
   for(const b of document.querySelectorAll('[data-bt]'))b.onclick=()=>{briefTrade=b.dataset.bt;openBriefing()};
   const rs=$('#bf_reset');if(rs)rs.onclick=()=>{const T=briefTrade;const k=brief.trades[T];
-    Object.assign(k,{edited:{},today:suggestToday(T),prev:suggestPrev(T),notWell:suggestNotWell(T),other:settings.otherTeams||'',site:settings.siteNews||''});saveBriefing();openBriefing()};
+    Object.assign(k,{edited:{},today:suggestToday(T),prev:suggestPrev(T),notWell:'',other:settings.otherTeams||'',site:settings.siteNews||''});saveBriefing();openBriefing()};
   $('#bf_one').onclick=()=>downloadBriefing([briefTrade]);
   $('#bf_all').onclick=()=>downloadBriefing(trades);
 }
